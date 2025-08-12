@@ -1,22 +1,15 @@
 name: Deploy to Railway
-
-on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:
-
+on: { push: { branches: [ "main" ] }, workflow_dispatch: {} }
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Deploy to Railway (worker)
-        uses: railwayapp/action@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      - run: npm i -g @railway/cli@3
+      - name: Deploy
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        with:
-          project: ${{ secrets.RAILWAY_PROJECT_ID }}
-          service: worker
-          command: python positions_guard.py --auto-cancel --no-pyramid
+        run: |
+          railway --version
+          railway up --project ${{ secrets.RAILWAY_PROJECT_ID }} --service worker --ci
