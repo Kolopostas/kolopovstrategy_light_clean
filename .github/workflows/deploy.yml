@@ -4,12 +4,17 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Setup Railway CLI
+        uses: actions/setup-node@v4
+
       - run: npm i -g @railway/cli@3
-      - name: Deploy
+
+      - name: Link project
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: |
-          railway --version
-          railway up --project ${{ secrets.RAILWAY_PROJECT_ID }} --service worker --ci
+        run: railway link --project ${{ secrets.RAILWAY_PROJECT_ID }}
+
+      - name: Deploy (railway up)
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service worker --ci
