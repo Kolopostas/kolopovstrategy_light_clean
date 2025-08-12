@@ -19,13 +19,8 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         with:
-          # Если у проекта один сервис, Railway сам подхватит.
-          # Явно укажем:
-          service: worker
-          # Если экшен «не находит» проект — раскомментируй project и добавь секрет:
-           project: ${{ secrets.RAILWAY_PROJECT_ID }}
-          # Можно задать старт-команду тут, если нет Procfile/Start Command:
-          # command: python positions_guard.py --auto-cancel --no-pyramid
+          service: workeR
+          project: ${{ secrets.RAILWAY_PROJECT_ID }}
 
       # === Вариант B (CLI через shell) — оставь закомментированным, если не нужен ===
       # - name: Install Railway CLI
