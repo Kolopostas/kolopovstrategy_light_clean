@@ -1,1 +1,1 @@
-worker:python positions_guard.py --live --auto-cancel --no-pyramid
+worker:python positions_guard.py --auto-cancel --no-pyramid
