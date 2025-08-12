@@ -1,92 +1,119 @@
-from typing import Dict, Any, Tuple
+import os
+from pathlib import Path
+from typing import Tuple, Dict, Any, Optional
+
+import numpy as np
 import pandas as pd
+import joblib
+from xgboost import XGBClassifier
 
-try:
-    import ccxt  # type: ignore
-except Exception:
-    ccxt = None
+from .bybit_exchange import create_exchange, normalize_symbol
 
-def compute_ema(series: pd.Series, span: int = 50) -> pd.Series:
-    return series.ewm(span=span, adjust=False).mean()
+def pair_key(symbol: str) -> str:
+    return normalize_symbol(symbol).upper().replace("/", "").replace(":USDT", "")
+
+def _fetch_ohlcv(symbol: str, timeframe: str = "5m", limit: int = 500) -> pd.DataFrame:
+    ex = create_exchange()
+    sym = normalize_symbol(symbol)
+    raw = ex.fetch_ohlcv(sym, timeframe=timeframe, limit=limit)
+    df = pd.DataFrame(raw, columns=["timestamp","open","high","low","close","volume"])
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    return df
 
 def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     delta = series.diff()
-    gain = delta.where(delta > 0, 0.0)
-    loss = -delta.where(delta < 0, 0.0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / (avg_loss.replace(0, 1e-9))
-    return 100 - (100 / (1 + rs))
+    gain = np.where(delta > 0, delta, 0.0)
+    loss = np.where(delta < 0, -delta, 0.0)
+    gain_ema = pd.Series(gain, index=series.index).ewm(alpha=1/period, adjust=False).mean()
+    loss_ema = pd.Series(loss, index=series.index).ewm(alpha=1/period, adjust=False).mean()
+    rs = gain_ema / (loss_ema + 1e-12)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
-def compute_macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[pd.Series, pd.Series]:
+def compute_macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[pd.Series,pd.Series]:
     ema_fast = series.ewm(span=fast, adjust=False).mean()
     ema_slow = series.ewm(span=slow, adjust=False).mean()
     macd = ema_fast - ema_slow
-    macd_signal = macd.ewm(span=signal, adjust=False).mean()
-    return macd, macd_signal
+    sig = macd.ewm(span=signal, adjust=False).mean()
+    return macd, sig
 
-def compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    hl = df["high"] - df["low"]
-    hc = (df["high"] - df["close"].shift()).abs()
-    lc = (df["low"] - df["close"].shift()).abs()
-    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
-    return tr.rolling(window=period).mean()
+def train_model_for_pair(symbol: str, timeframe: str = "5m", limit: int = 3000, model_dir: str = "models") -> float:
+    df = _fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+    if df.empty or len(df) < 200:
+        raise RuntimeError(f"Недостаточно данных для {symbol}")
 
-def fetch_ohlcv_df(symbol: str, timeframe: str = "1h", limit: int = 300, proxies: dict = None) -> pd.DataFrame:
-    if ccxt is None:
-        raise RuntimeError("ccxt is not installed. Please add it to requirements and install.")
-    exchange = ccxt.bybit({
-        "enableRateLimit": True,
-        "proxies": proxies or {},
-        "options": {"defaultType": "swap"},
-    })
-    raw = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-    df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    if ":USDT" not in symbol:
-        symbol = symbol.replace("/USDT", "USDT:USDT")
-    raw = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)    
-    return df
+    df["ema"] = df["close"].ewm(span=50, adjust=False).mean()
+    df["rsi"] = compute_rsi(df["close"], period=14)
+    macd, sig = compute_macd(df["close"])
+    df["macd"] = macd
+    df["signal"] = sig
+    df = df.dropna().reset_index(drop=True)
 
-def suggest_leverage(conf: float) -> int:
-    if conf >= 0.85:
-        return 10
-    if conf >= 0.78:
-        return 7
-    if conf >= 0.70:
-        return 5
-    return 3
+    future = df["close"].shift(-1)
+    y = (future > df["close"]).astype(int).values[:-1]
+    X = df[["close","ema","rsi","macd","signal"]].values[:-1].astype(float)
+    assert len(X) == len(y)
 
-def predict_trend(symbol: str, proxy_url: str = "") -> Dict[str, Any]:
-    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else {}
-    df = fetch_ohlcv_df(symbol, timeframe="1h", limit=200, proxies=proxies)
-    price = df["close"]
-    ema50 = compute_ema(price, 50)
-    macd, macd_sig = compute_macd(price)
-    atr14 = compute_atr(df, 14)
+    split = int(len(X)*0.8)
+    Xtr, Ytr = X[:split], y[:split]
+    Xte, Yte = X[split:], y[split:]
 
-    last_close = float(price.iloc[-1])
-    last_ema = float(ema50.iloc[-1])
-    last_macd = float(macd.iloc[-1])
-    last_sig = float(macd_sig.iloc[-1])
-    last_atr = float(atr14.iloc[-1] if pd.notna(atr14.iloc[-1]) else 0.0)
+    model = XGBClassifier(
+        n_estimators=300,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        reg_lambda=1.0,
+        objective="binary:logistic",
+        n_jobs=2,
+        random_state=42,
+    )
+    model.fit(Xtr, Ytr)
+    acc = float((model.predict(Xte) == Yte).mean()) if len(Yte) else 0.0
 
-    if last_close > last_ema and last_macd > last_sig:
-        signal = "LONG"
-        confidence = 0.78
-        tp = last_close + 1.5 * last_atr if last_atr > 0 else last_close * 1.008
-        sl = last_close - 1.0 * last_atr if last_atr > 0 else last_close * 0.994
-    else:
-        signal = "SHORT"
-        confidence = 0.75
-        tp = last_close - 1.5 * last_atr if last_atr > 0 else last_close * 0.992
-        sl = last_close + 1.0 * last_atr if last_atr > 0 else last_close * 1.006
+    Path(model_dir).mkdir(parents=True, exist_ok=True)
+    out_path = Path(model_dir) / f"model_{pair_key(symbol)}.pkl"
+    joblib.dump(model, out_path)
+    print(f"✅ {normalize_symbol(symbol)} trained, val_acc={acc:.3f} → {out_path}")
+    return acc
 
-    return {
-        "signal": signal,
-        "confidence": float(round(confidence, 4)),
-        "price": last_close,
-        "tp": float(round(tp, 6)),
-        "sl": float(round(sl, 6)),
-        "leverage": suggest_leverage(confidence),
-    }
+def train_many(pairs, timeframe="5m", limit=3000, model_dir="models"):
+    for p in pairs:
+        try:
+            train_model_for_pair(p, timeframe=timeframe, limit=limit, model_dir=model_dir)
+        except Exception as e:
+            print(f"⚠️ {p}: {e}")
+
+def predict_trend(symbol: str, timeframe: Optional[str] = None, limit: int = 500) -> Dict[str, Any]:
+    tf = timeframe or os.getenv("TIMEFRAME", "5m")
+    model_path = Path(os.getenv("MODEL_DIR","models")) / f"model_{pair_key(symbol)}.pkl"
+    if not model_path.exists():
+        return {"signal": "hold", "confidence": 0.0, "proba": {"LONG":0.0, "SHORT":0.0}}
+
+    model = joblib.load(model_path)
+    df = _fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+    if df.empty:
+        return {"signal": "hold", "confidence": 0.0, "proba": {"LONG":0.0, "SHORT":0.0}}
+
+    df["ema"] = df["close"].ewm(span=50, adjust=False).mean()
+    df["rsi"] = compute_rsi(df["close"], period=14)
+    macd, sig = compute_macd(df["close"])
+    df["macd"] = macd
+    df["signal"] = sig
+    df = df.dropna().reset_index(drop=True)
+
+    feats = df[["close","ema","rsi","macd","signal"]].values[-1:].astype(float)
+    try:
+        proba = model.predict_proba(feats)[0]
+        p_short, p_long = float(proba[0]), float(proba[1])  # [SHORT, LONG]
+        signal = "long" if p_long >= p_short else "short"
+        conf = max(p_long, p_short)
+        return {"signal": signal, "confidence": conf, "proba": {"LONG": p_long, "SHORT": p_short}}
+    except Exception:
+        last_close = float(df["close"].iloc[-1])
+        last_ema   = float(df["ema"].iloc[-1])
+        signal = "long" if last_close > last_ema else "short"
+        return {"signal": signal, "confidence": 0.6,
+                "proba": {"LONG": 0.6 if signal=='long' else 0.4,
+                          "SHORT": 0.4 if signal=='long' else 0.6}}

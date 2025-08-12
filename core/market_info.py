@@ -1,71 +1,83 @@
-# core/market_info.py
-from typing import Dict, Any
-from functools import lru_cache
-from pybit.unified_trading import HTTP  # type: ignore
+from typing import Dict, Tuple, List
+from .bybit_exchange import create_exchange, normalize_symbol
 
-@lru_cache(maxsize=256)
-def get_instrument_info(session: HTTP, symbol_noslash: str, category: str = "linear") -> Dict[str, Any]:
-    """
-    Кэшируем информацию об инструменте (лот/тик/минималки).
-    symbol_noslash: 'ETHUSDT', 'BTCUSDT', ...
-    """
-    resp = session.get_instruments_info(category=category, symbol=symbol_noslash)
-    if resp.get("retCode") != 0:
-        raise RuntimeError(f"instruments-info error: {resp.get('retCode')} {resp.get('retMsg')}")
-    lst = resp.get("result", {}).get("list", [])
-    if not lst:
-        raise RuntimeError(f"instruments-info empty for {symbol_noslash}")
-    return lst[0]
+def get_balance(asset: str = "USDT") -> float:
+    ex = create_exchange()
+    bal = ex.fetch_balance()
+    return float(bal.get(asset, {}).get("free", 0.0) or 0.0)
 
-def _step_floor(x: float, step: float) -> float:
-    # безопасное округление вниз к шагу (для qty/price)
-    if step <= 0:
-        return x
-    k = int(x / step + 1e-12)
-    return k * step
+def get_symbol_price(symbol: str) -> float:
+    ex = create_exchange()
+    sym = normalize_symbol(symbol)
+    t = ex.fetch_ticker(sym)
+    return float(t.get("last") or t.get("close") or 0.0)
 
-def _step_ceil(x: float, step: float) -> float:
-    if step <= 0:
-        return x
-    k = int(x / step - 1e-12)
-    v = (k if k * step >= x else k + 1) * step
-    # страховка от аккумулирующей ошибки
-    if v < x:
-        v += step
-    return v
+def adjust_qty_price(symbol: str, qty: float, price: float) -> Tuple[float, float, Dict]:
+    """Коррекция qty/price под биржевые шаги и минимальные требования (min amount / min cost)."""
+    ex = create_exchange()
+    sym = normalize_symbol(symbol)
+    market = ex.market(sym)
 
-def adjust_qty_price(info: Dict[str, Any], qty: float, price: float) -> (float, float):
-    """
-    Приводим qty/price к шагам и минималкам инструмента, проверяем «ноционал».
-    Возвращаем (qty_adj, price_adj).
-    """
-    lot = info["lotSizeFilter"]
-    qstep = float(lot["qtyStep"])
-    min_qty = float(lot.get("minOrderQty", qstep))
+    qty_adj = float(ex.amount_to_precision(sym, qty))
+    price_adj = float(ex.price_to_precision(sym, price))
 
-    pf = info["priceFilter"]
-    tick = float(pf["tickSize"])
+    min_amount = market.get("limits", {}).get("amount", {}).get("min")
+    min_cost   = market.get("limits", {}).get("cost", {}).get("min")
 
-    min_amt = float(info.get("minOrderAmt", 0) or 0)
+    need_qty = qty_adj
+    if min_amount:
+        need_qty = max(need_qty, float(min_amount))
+    if min_cost:
+        need_qty = max(need_qty, float(min_cost) / max(price_adj, 1e-12))
 
-    qty_adj = max(_step_floor(qty, qstep), min_qty)
-    price_adj = _step_floor(price, tick)
+    if need_qty > qty_adj:
+        qty_adj = float(ex.amount_to_precision(sym, need_qty))
+        if qty_adj < need_qty:  # страховка от float
+            qty_adj = float(ex.amount_to_precision(sym, need_qty * 1.0000001))
 
-    # проверим минимальный ноционал
-    notional = price_adj * qty_adj
-    if min_amt and notional < min_amt:
-        qty_adj = _step_ceil(min_amt / max(price_adj, 1e-9), qstep)
+    return qty_adj, price_adj, market
 
-    return qty_adj, price_adj
+# ======== ДОБАВЛЕНО: проверки ордеров/позиций ========
 
-def get_available_usdt(session: HTTP) -> float:
-    """
-    Доступный баланс USDT (для UTA). Если используешь суб‑аккаунты/кошельки, адаптируй.
-    """
-    resp = session.get_wallet_balance(accountType="UNIFIED")
-    if resp.get("retCode") != 0:
-        raise RuntimeError(f"wallet-balance error: {resp.get('retCode')} {resp.get('retMsg')}")
-    for coin in resp.get("result", {}).get("list", [])[0].get("coin", []):
-        if coin.get("coin") == "USDT":
-            return float(coin.get("availableToWithdraw", 0))
-    return 0.0
+def get_open_orders(symbol: str) -> List[Dict]:
+    """Список открытых ордеров по символу (не исполнены/не отменены)."""
+    ex = create_exchange()
+    sym = normalize_symbol(symbol)
+    try:
+        return ex.fetch_open_orders(sym)
+    except Exception:
+        return []
+
+def cancel_open_orders(symbol: str) -> int:
+    """Отменяет ВСЕ открытые ордера по символу. Возвращает число отменённых."""
+    ex = create_exchange()
+    sym = normalize_symbol(symbol)
+    try:
+        opened = ex.fetch_open_orders(sym)
+        for o in opened:
+            try:
+                ex.cancel_order(o["id"], sym)
+            except Exception:
+                pass
+        return len(opened)
+    except Exception:
+        return 0
+
+def has_open_position(symbol: str) -> bool:
+    """Есть ли нетто‑позиция по символу (size != 0)."""
+    ex = create_exchange()
+    sym = normalize_symbol(symbol)
+    try:
+        poss = ex.fetch_positions([sym])
+        for p in poss:
+            # Bybit/ccxt: contracts / size / info
+            size = p.get("contracts") or p.get("size") or 0
+            try:
+                size = float(size)
+            except Exception:
+                size = 0.0
+            if abs(size) > 0:
+                return True
+        return False
+    except Exception:
+        return False

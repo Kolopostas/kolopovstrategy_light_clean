@@ -1,176 +1,124 @@
-# positions_guard.py
 import os
-import sys
-import time
-from pathlib import Path
-from datetime import datetime, timezone, timedelta
 import argparse
+import tempfile
+from contextlib import contextmanager
+from datetime import datetime, timezone
 
 from core.env_loader import load_and_check_env
-from core.predict import predict_trend
-from core.time_utils import compare_bybit_time
-from core.trade_log import log_trade, should_pause_pair
-from core.train_model import train_models
-from core.market_info import get_instrument_info, adjust_qty_price, get_available_usdt
-from core.env_loader import normalize_symbol
-from position_manager import make_session, set_leverage, open_position
+from core.bybit_exchange import normalize_symbol
+from core.market_info import (
+    get_balance, get_symbol_price,
+    get_open_orders, cancel_open_orders, has_open_position
+)
+from core.predict import predict_trend, train_model_for_pair
+from position_manager import open_position
 
-SLEEP_SEC_PER_PAIR = int(os.getenv("SLEEP_SEC_PER_PAIR", "2"))
-
-# ---------------- Helpers ----------------
-def _model_path(symbol: str) -> Path:
-    """./models/model_TONUSDT.pkl"""
-    return Path("models") / f"model_{symbol.replace('/','').upper()}.pkl"
-
-def _need_retrain(symbol: str, max_age_days: int) -> bool:
-    p = _model_path(symbol)
-    if not p.exists():
-        return True
-    age = datetime.now(timezone.utc) - datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
-    return age > timedelta(days=max_age_days)
-
-def _maybe_retrain(pairs, proxy_url: str):
-    auto = str(os.getenv("AUTO_RETRAIN", "true")).lower() in ("1", "true", "yes")
-    if not auto:
-        print("🔧 AUTO_RETRAIN=false — пропускаю автотренировку")
-        return
-    max_age = int(os.getenv("MODEL_MAX_AGE_DAYS", "1"))
-    to_train = [s for s in pairs if _need_retrain(s, max_age)]
-    if to_train:
-        print(f"🔁 Обучаю модели: {to_train}")
-        res = train_models(to_train, proxy_url=proxy_url)
-        for pair, path, status in res:
-            print(f"   • {pair}: {status} {path if path else ''}")
-    else:
-        print("✅ Модели актуальны — обучение не требуется")
-
-def _print_header(cfg, pairs):
-    mode = "DRY_RUN" if cfg["DRY_RUN"] else "LIVE"
-    print("──────── Kolopovstrategy guard ────────")
-    print(f"⏱  {datetime.now(timezone.utc).isoformat()}")
-    print(f"🛠  MODE: {mode} | DOMAIN: {cfg['DOMAIN']} | LEV={cfg['LEVERAGE']} | AMOUNT={cfg['AMOUNT']}")
-    print(f"🎯 Pairs: {', '.join(pairs)}")
+@contextmanager
+def single_instance_lock(name: str = "positions_guard.lock"):
+    path = os.path.join(tempfile.gettempdir(), name)
+    if os.path.exists(path):
+        raise RuntimeError(f"Already running: {path}")
     try:
-        delta, srv = compare_bybit_time()
-        if delta > 1.0:
-            print(f"⚠️  Time drift ~{delta:.2f}s vs Bybit; увеличь RECV_WINDOW (сейчас {cfg['RECV_WINDOW']})")
-        else:
-            print(f"🕒 Bybit time check OK (Δ≈{delta:.2f}s)")
-    except Exception as e:
-        print("⚠️  Time check failed:", e)
-    print("───────────────────────────────────────")
-
-# ---------------- Main cycle ----------------
-def run_once(pairs_override=None, skip_train=False):
-    cfg = load_and_check_env(required_keys=["BYBIT_API_KEY", "BYBIT_SECRET_KEY"])
-
-    pairs = pairs_override if pairs_override else cfg["PAIRS"]
-    if not pairs:
-        print("❌ Нет пар для обработки (PAIRS пуст).")
-        return
-
-    _print_header(cfg, pairs)
-    if not skip_train:
-        _maybe_retrain(pairs, proxy_url=cfg["PROXY_URL"])
-
-    session = None if cfg["DRY_RUN"] else make_session(cfg["API_KEY"], cfg["API_SECRET"], cfg["DOMAIN"])
-
-    for pair in pairs:
+        open(path, "w").close()
+        yield
+    finally:
         try:
-            if should_pause_pair(pair):
-                print(f"⏸  Пропуск (pause active): {pair}")
+            os.remove(path)
+        except Exception:
+            pass
+
+def ensure_models_exist(pairs, timeframe="5m", limit=3000, model_dir="models"):
+    os.makedirs(model_dir, exist_ok=True)
+    missing = []
+    for p in pairs:
+        key = normalize_symbol(p).upper().replace("/", "").replace(":USDT", "")
+        mpath = os.path.join(model_dir, f"model_{key}.pkl")
+        if not os.path.exists(mpath):
+            missing.append(p)
+    if missing:
+        print(f"🧠 Нет моделей для: {missing} — обучаем...")
+        for p in missing:
+            try:
+                train_model_for_pair(p, timeframe=timeframe, limit=limit, model_dir=model_dir)
+            except Exception as e:
+                print(f"⚠️ {p}: {e}")
+
+def main():
+    load_and_check_env()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pair", type=str)
+    parser.add_argument("--threshold", type=float, default=float(os.getenv("CONF_THRESHOLD", "0.65")))
+    parser.add_argument("--timeframe", type=str, default=os.getenv("TIMEFRAME", "5m"))
+    parser.add_argument("--limit", type=int, default=int(os.getenv("TRAIN_LIMIT", "3000")))
+    parser.add_argument("--live", action="store_true", help="Разрешить реальные сделки")
+    parser.add_argument("--autotrain", action="store_true", help="Обучить недостающие модели перед стартом")
+    parser.add_argument("--auto-cancel", action="store_true", help="Автоотмена открытых ордеров перед входом")
+    parser.add_argument("--no-pyramid", action="store_true", help="Не входить, если уже есть позиция")
+    args = parser.parse_args()
+
+    pairs = [args.pair] if args.pair else [s.strip() for s in os.getenv("PAIRS","").split(",") if s.strip()]
+    if not pairs:
+        raise ValueError("PAIRS пуст — заполни в .env")
+
+    # предохранители из .env (с дефолтами)
+    min_balance = float(os.getenv("MIN_BALANCE_USDT", "5"))  # минимальный баланс для попытки входа
+    dry_run = not args.live
+
+    print("──────── Kolopovstrategy guard ────────")
+    print("⏱ ", datetime.now(timezone.utc).isoformat())
+    print(f"Mode: {'LIVE' if not dry_run else 'DRY'} | Threshold={args.threshold}")
+    print("📈 Pairs:", ", ".join(pairs))
+
+    if args.autotrain:
+        ensure_models_exist(pairs, timeframe=args.timeframe, limit=args.limit)
+
+    with single_instance_lock():
+        usdt = get_balance("USDT")
+        print(f"💰 Баланс USDT: {usdt:.2f}")
+        if usdt < min_balance:
+            print(f"⛔ Баланс ниже минимума ({min_balance} USDT) — торговля пропущена.")
+            return
+
+        # DRY_RUN переменная — двойной предохранитель
+        if dry_run:
+            os.environ["DRY_RUN"] = "1"
+        else:
+            os.environ.pop("DRY_RUN", None)
+
+        for p in pairs:
+            sym = normalize_symbol(p)
+            price = get_symbol_price(sym)
+
+            # 1) Пред‑чек: открытые ордера
+            opened = get_open_orders(sym)
+            if opened:
+                print(f"⏳ Есть открытые ордера по {sym}: {len(opened)}")
+                if args.auto_cancel:
+                    n = cancel_open_orders(sym)
+                    print(f"🧹 Отменил {n} ордер(ов).")
+                else:
+                    print("⏸ Пропускаю вход (запусти с --auto-cancel, чтобы чистить хвосты).")
+                    continue
+
+            # 2) Пред‑чек: активная позиция
+            if args.no_pyramid and has_open_position(sym):
+                print(f"🏕 Уже есть позиция по {sym} — пирамидинг выключен (--no-pyramid). Пропуск.")
                 continue
 
-            pred = predict_trend(pair, proxy_url=cfg["PROXY_URL"])
-            direction = pred["signal"].lower()
-            conf = pred["confidence"]
-            lev = pred.get("leverage", cfg["LEVERAGE"])
-            last = pred["price"]
-            tp = pred["tp"]
-            sl = pred["sl"]
+            # 3) Прогноз
+            pred = predict_trend(sym, timeframe=args.timeframe)
+            signal = str(pred.get("signal", "hold")).lower()
+            conf = float(pred.get("confidence", 0.0))
+            print(f"🔮 {sym} @ {price:.4f} → signal={signal} conf={conf:.2f} proba={pred.get('proba', {})}")
 
-            print(f"📈 {pair}: {pred['signal']} conf={conf:.3f} price={last} tp={tp} sl={sl} lev={lev}")
+            # 4) Вход
+            if dry_run or signal not in ("long", "short") or conf < args.threshold:
+                print("⏸ Условия входа не выполнены (или DRY).")
+                continue
 
-            if cfg["DRY_RUN"]:
-                print("🧪 DRY_RUN — сделка НЕ отправлена")
-            else:
-                # Страховка: не превышаем конфиговый предел плеча
-                eff_lev = max(1, min(int(lev), int(cfg["LEVERAGE"])))
-                set_leverage(session, pair, eff_lev)
-
-            if cfg["DRY_RUN"]:
-                print("🧪 DRY_RUN — сделка НЕ отправлена")
-            else:
-                eff_lev = max(1, min(int(lev), int(cfg["LEVERAGE"])))
-                set_leverage(session, pair, eff_lev)
-
-                # --- Новое: подтянем правила инструмента и подстроим qty ---
-                info = get_instrument_info(session, normalize_symbol(pair), category="linear")
-                qty_planned = float(cfg["AMOUNT"])
-                px = float(last)  # по рынку price не требуется, но для проверки минималок используем last
-                qty_adj, _ = adjust_qty_price(info, qty_planned, px)
-
-                # (Дополнительно можно проверить доступную маржу:)
-                # avail = get_available_usdt(session)
-                # fee = 0.0006  # пример для taker
-                # need = (px * qty_adj) / eff_lev * 1.01 + (px * qty_adj) * fee
-                # if avail < need:
-                #     # уменьшаем qty пропорционально
-                #     scale = max(0.1, avail / max(need, 1e-9))
-                #     qty_adj, _ = adjust_qty_price(info, qty_adj * scale, px)
-                #     print(f"⚠️  Мало USDT: уменьшаю qty → {qty_adj}")
-
-                resp = open_position(
-                    session=session,
-                    symbol_pair=pair,
-                    direction=direction,
-                    qty=qty_adj,                       # <<< используем скорректированное qty
-                    order_type="Market",
-                    recv_window=cfg["RECV_WINDOW"],
-                )
-
-
-                resp = open_position(
-                    session=session,
-                    symbol_pair=pair,
-                    direction=direction,
-                    qty=cfg["AMOUNT"],
-                    order_type="Market",         # можно сменить на Limit при желанииrecv_window=cfg["RECV_WINDOW"],
-                )
-                ret = resp.get("response", {})
-                code = ret.get("retCode")
-                msg = ret.get("retMsg")
-                if code and code != 0:
-                    print(f"❗ Bybit retCode={code} msg={msg}")
-                else:
-                    print("📝 Order OK:", {k: ret[k] for k in ret if k in ("retCode","retMsg")})
-
-            log_trade({
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "pair": pair,
-                "signal": pred["signal"],
-                "confidence": f"{conf:.4f}",
-                "price": f"{last}",
-                "tp": f"{tp}",
-                "sl": f"{sl}",
-                "dry_run": str(cfg["DRY_RUN"]),
-            })
-        except KeyboardInterrupt:
-            print("⛔ Остановлено пользователем")
-            return
-        except Exception as e:
-            print(f"❌ {pair}: ошибка {e}")
-
-        time.sleep(SLEEP_SEC_PER_PAIR)
-
-# ---------------- CLI ----------------
-def _parse_args():
-    ap = argparse.ArgumentParser(description="Kolopovstrategy position guard")
-    ap.add_argument("--pair", help="Запустить только по одной паре (например, TON/USDT)")
-    ap.add_argument("--no-train", action="store_true", help="Не обучать модели при запуске")
-    return ap.parse_args()
+            res = open_position(sym, side=signal)
+            print("🧾 Результат:", res)
 
 if __name__ == "__main__":
-    args = _parse_args()
-    override = [args.pair] if args.pair else None
-    run_once(pairs_override=override, skip_train=args.no_train)
+    main()
