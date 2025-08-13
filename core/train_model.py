@@ -3,7 +3,7 @@ import argparse
 from .env_loader import load_and_check_env
 from .predict import train_model_for_pair
 
-def train_many(pairs, timeframe="5m", limit=3000, model_dir="models"):
+def train_many(pairs, timeframe="30m", limit=3000, model_dir="models"):
     os.makedirs(model_dir, exist_ok=True)
     for sym in pairs:
         print(f"\n📈 Обучение модели для {sym}...")
