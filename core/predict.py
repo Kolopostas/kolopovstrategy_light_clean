@@ -12,7 +12,7 @@ from .bybit_exchange import create_exchange, normalize_symbol
 def pair_key(symbol: str) -> str:
     return normalize_symbol(symbol).upper().replace("/", "").replace(":USDT", "")
 
-def _fetch_ohlcv(symbol: str, timeframe: str = "5m", limit: int = 500) -> pd.DataFrame:
+def _fetch_ohlcv(symbol: str, timeframe: str = "15m", limit: int = 2000) -> pd.DataFrame:
     ex = create_exchange()
     sym = normalize_symbol(symbol)
     raw = ex.fetch_ohlcv(sym, timeframe=timeframe, limit=limit)
