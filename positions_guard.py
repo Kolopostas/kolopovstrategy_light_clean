@@ -27,7 +27,7 @@ def single_instance_lock(name: str = "positions_guard.lock"):
         except Exception:
             pass
 
-def ensure_models_exist(pairs, timeframe="5m", limit=3000, model_dir="models"):
+def ensure_models_exist(pairs, timeframe="15m", limit=2000, model_dir="models"):
     os.makedirs(model_dir, exist_ok=True)
     missing = []
     for p in pairs:
