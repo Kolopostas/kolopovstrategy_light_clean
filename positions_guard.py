@@ -74,6 +74,7 @@ def main():
         ensure_models_exist(pairs, timeframe=args.timeframe, limit=args.limit)
 
     with single_instance_lock():
+        print("DEBUG PROXY_URL:", os.getenv("PROXY_URL"))
         usdt = get_balance("USDT")
         print(f"💰 Баланс USDT: {usdt:.2f}")
         if usdt < min_balance:
