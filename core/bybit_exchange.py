@@ -1,13 +1,12 @@
-
 import os
 import ccxt
 
 def create_exchange() -> ccxt.bybit:
     recv_window = int(os.getenv("RECV_WINDOW", "20000"))
-    api_url = os.getenv("BYBIT_API_URL")  # например, https://api.bytick.com или https://api.bybit.com
+    api_url = (os.getenv("BYBIT_API_URL") or "").strip().rstrip(";")  # без лишних символов
     use_testnet = os.getenv("BYBIT_TESTNET") in ("1", "true", "True")
 
-    config = {
+    cfg = {
         "apiKey": os.getenv("BYBIT_API_KEY"),
         "secret": os.getenv("BYBIT_SECRET_KEY"),
         "enableRateLimit": True,
@@ -21,14 +20,25 @@ def create_exchange() -> ccxt.bybit:
 
     proxy = os.getenv("PROXY_URL")
     if proxy:
-        config["proxies"] = {"http": proxy, "https": proxy}
+        cfg["proxies"] = {"http": proxy, "https": proxy}
 
+    # ВАЖНО: ccxt ждёт словарь public/private, а не строку
     if api_url:
-        config["urls"] = {"api": api_url}
+        cfg["urls"] = {
+            "api": {
+                "public": api_url,
+                "private": api_url,
+            }
+        }
 
-    ex = ccxt.bybit(config)
+    ex = ccxt.bybit(cfg)
 
-    # Полезный дебаг в логи Railway
+    # Для тестнета ccxt рекомендует sandbox_mode
+    try:
+        ex.set_sandbox_mode(use_testnet)
+    except Exception:
+        pass
+
     print("DEBUG BYBIT:", {
         "api": api_url or "default",
         "recvWindow": recv_window,
@@ -38,6 +48,7 @@ def create_exchange() -> ccxt.bybit:
 
     ex.load_markets(reload=True)
     return ex
+
 
 def normalize_symbol(symbol: str) -> str:
     s = symbol.upper().replace(" ", "")
