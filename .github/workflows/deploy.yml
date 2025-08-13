@@ -18,17 +18,17 @@ jobs:
           node-version: 18
 
       - name: Install Railway CLI
-        run: npm i -g @railway/cli@3
+        run: npm i -g @railway/cli@latest  # Используем latest для актуальных фиксов
 
-      - name: Railway login (non-interactive)
+      - name: Authenticate with Railway
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}  # Проектный токен
         run: |
-          echo "$RAILWAY_TOKEN" | railway login --ci
-          railway whoami
+          echo "$RAILWAY_TOKEN" | railway login
+          railway projects  # Проверка доступных проектов
 
-      - name: Link project by ID
-        run: railway link --project ${{ secrets.RAILWAY_PROJECT_ID }}
+      - name: Link project
+        run: railway link --project ${{ secrets.RAILWAY_PROJECT_ID }} --token ${{ secrets.RAILWAY_PROJECT_TOKEN }}
 
-      - name: Deploy to Railway (worker)
-        run: railway up --service worker --ci
+      - name: Deploy worker service
+        run: railway up --service worker
