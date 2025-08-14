@@ -46,6 +46,10 @@ jobs:
       - name: Run agent guard script
         run: python tools/agent_guard.py
 
+      - name: Trade improve patch (ATR stop, filters, limits)
+        run: python tools/agent_trade_improve.py
+
+
       - name: Create PR with fixes (if any)
         uses: peter-evans/create-pull-request@v6
         with:
