@@ -1,5 +1,7 @@
 import os
+
 import ccxt
+
 
 def create_exchange() -> ccxt.bybit:
     """
@@ -8,23 +10,22 @@ def create_exchange() -> ccxt.bybit:
     proxy = os.getenv("PROXY_URL")
     recv_window = int(os.getenv("RECV_WINDOW", "20000"))
 
-    exchange = ccxt.bybit({
-        "apiKey": os.getenv("BYBIT_API_KEY"),
-        "secret": os.getenv("BYBIT_SECRET_KEY"),
-        "enableRateLimit": True,
-        "options": {
-            "defaultType": "swap",  # Для деривативов
-            "adjustForTimeDifference": True,
-            "recvWindow": recv_window
+    exchange = ccxt.bybit(
+        {
+            "apiKey": os.getenv("BYBIT_API_KEY"),
+            "secret": os.getenv("BYBIT_SECRET_KEY"),
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "swap",  # Для деривативов
+                "adjustForTimeDifference": True,
+                "recvWindow": recv_window,
+            },
         }
-    })
+    )
 
     # Настройка прокси
     if proxy:
-        exchange.proxies = {
-            "http": proxy,
-            "https": proxy
-        }
+        exchange.proxies = {"http": proxy, "https": proxy}
 
     try:
         exchange.load_markets(reload=True)

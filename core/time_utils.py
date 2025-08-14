@@ -1,9 +1,12 @@
-from typing import Tuple
 from datetime import datetime, timezone
+from typing import Tuple
+
 import requests
+
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
 
 def get_bybit_server_time() -> int:
     # Public endpoint; works without auth
@@ -11,6 +14,7 @@ def get_bybit_server_time() -> int:
     r.raise_for_status()
     data = r.json()
     return int(data.get("result", {}).get("timeSecond", 0))
+
 
 def compare_bybit_time() -> Tuple[float, int]:
     server_sec = get_bybit_server_time()

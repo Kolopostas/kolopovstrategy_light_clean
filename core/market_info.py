@@ -1,10 +1,13 @@
-from typing import Dict, Tuple, List
+from typing import Dict, List, Tuple
+
 from .bybit_exchange import create_exchange, normalize_symbol
+
 
 def get_balance(asset: str = "USDT") -> float:
     ex = create_exchange()
     bal = ex.fetch_balance()
     return float(bal.get(asset, {}).get("free", 0.0) or 0.0)
+
 
 def get_symbol_price(symbol: str) -> float:
     ex = create_exchange()
@@ -12,7 +15,10 @@ def get_symbol_price(symbol: str) -> float:
     t = ex.fetch_ticker(sym)
     return float(t.get("last") or t.get("close") or 0.0)
 
-def adjust_qty_price(symbol: str, qty: float, price: float) -> Tuple[float, float, Dict]:
+
+def adjust_qty_price(
+    symbol: str, qty: float, price: float
+) -> Tuple[float, float, Dict]:
     """Коррекция qty/price под биржевые шаги и минимальные требования (min amount / min cost)."""
     ex = create_exchange()
     sym = normalize_symbol(symbol)
@@ -22,7 +28,7 @@ def adjust_qty_price(symbol: str, qty: float, price: float) -> Tuple[float, floa
     price_adj = float(ex.price_to_precision(sym, price))
 
     min_amount = market.get("limits", {}).get("amount", {}).get("min")
-    min_cost   = market.get("limits", {}).get("cost", {}).get("min")
+    min_cost = market.get("limits", {}).get("cost", {}).get("min")
 
     need_qty = qty_adj
     if min_amount:
@@ -37,7 +43,9 @@ def adjust_qty_price(symbol: str, qty: float, price: float) -> Tuple[float, floa
 
     return qty_adj, price_adj, market
 
+
 # ======== ДОБАВЛЕНО: проверки ордеров/позиций ========
+
 
 def get_open_orders(symbol: str) -> List[Dict]:
     """Список открытых ордеров по символу (не исполнены/не отменены)."""
@@ -47,6 +55,7 @@ def get_open_orders(symbol: str) -> List[Dict]:
         return ex.fetch_open_orders(sym)
     except Exception:
         return []
+
 
 def cancel_open_orders(symbol: str) -> int:
     """Отменяет ВСЕ открытые ордера по символу. Возвращает число отменённых."""
@@ -62,6 +71,7 @@ def cancel_open_orders(symbol: str) -> int:
         return len(opened)
     except Exception:
         return 0
+
 
 def has_open_position(symbol: str) -> bool:
     """Есть ли нетто‑позиция по символу (size != 0)."""
