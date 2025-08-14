@@ -18,7 +18,6 @@ def train_many(pairs, timeframe="30m", limit=3000, model_dir="models"):
             print(f"⚠️ {sym} — ошибка обучения: {e}")
 
 
-
 def main():
     load_and_check_env()
     parser = argparse.ArgumentParser()
