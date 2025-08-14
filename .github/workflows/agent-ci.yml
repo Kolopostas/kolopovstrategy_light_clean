@@ -26,22 +26,12 @@ jobs:
           pip install pyright flake8 bandit vulture isort black
 
       - name: Static checks
-        shell: bash
         run: |
-          set -eo pipefail
-          files="$(git ls-files '*.py' || true)"
-          if [ -n "$files" ]; then
-            python - <<'PY'
-import subprocess, py_compile, sys
-files = subprocess.check_output("git ls-files '*.py'", shell=True, text=True).splitlines()
-for f in files:
-    py_compile.compile(f, doraise=True)
-print("Syntax OK")
-PY
-          fi
+          python tools/syntax_check.py
           flake8 . || true
           bandit -q -r . || true
           vulture . || true
+
 
       - name: Auto-format
         run: |
