@@ -1,6 +1,8 @@
 import os
-from typing import Iterable, Dict, Any, Optional
+from typing import Any, Dict, Iterable, Optional
+
 from dotenv import load_dotenv
+
 
 def load_and_check_env(required_keys: Optional[Iterable[str]] = None) -> Dict[str, Any]:
     load_dotenv()
@@ -19,7 +21,11 @@ def load_and_check_env(required_keys: Optional[Iterable[str]] = None) -> Dict[st
         "API_SECRET": os.getenv("BYBIT_SECRET_KEY", ""),
         "DOMAIN": os.getenv("DOMAIN", "bybit"),
         "PROXY_URL": proxy_url,
-        "PAIRS": [p.strip() for p in os.getenv("PAIRS", os.getenv("PAIR", "TON/USDT")).split(",") if p.strip()],
+        "PAIRS": [
+            p.strip()
+            for p in os.getenv("PAIRS", os.getenv("PAIR", "TON/USDT")).split(",")
+            if p.strip()
+        ],
         "LEVERAGE": int(os.getenv("LEVERAGE", "3")),
         "AMOUNT": float(os.getenv("AMOUNT", "5")),
         "RISK_FRACTION": float(os.getenv("RISK_FRACTION", "0.05")),
@@ -27,6 +33,7 @@ def load_and_check_env(required_keys: Optional[Iterable[str]] = None) -> Dict[st
         "DRY_RUN": os.getenv("DRY_RUN", "true").lower() in ("1", "true", "yes"),
     }
     return cfg
+
 
 def normalize_symbol(pair: str) -> str:
     return pair.replace("/", "").upper()
