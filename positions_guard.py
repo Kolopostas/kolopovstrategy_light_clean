@@ -3,6 +3,7 @@ import os
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import time
 
 from core.bybit_exchange import normalize_symbol
 from core.env_loader import load_and_check_env
@@ -55,6 +56,7 @@ def main():
     load_and_check_env()
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('--once', action='store_true', help='Один проход и выход')
     parser.add_argument("--pair", type=str)
     parser.add_argument(
         "--threshold", type=float, default=float(os.getenv("CONF_THRESHOLD", "0.65"))
@@ -156,5 +158,20 @@ def main():
             print("🧾 Результат:", res)
 
 
+# AGENT_LOOP: цикличный запуск по CHECK_INTERVAL (ENV), либо единичный при --once
 if __name__ == "__main__":
-    main()
+    import sys, os
+    iv = int(os.getenv("CHECK_INTERVAL", os.getenv("CHECK_INTERVAL_SECONDS", "30")))
+    if "--once" in sys.argv:
+        main()
+    else:
+        print(f"[CONFIG] CHECK_INTERVAL={iv}s")
+        while True:
+            t0 = time.time()
+            try:
+                main()
+            except Exception as e:
+                print(f"[LOOP ERR] {e}")
+            sleep_for = max(0.0, iv - (time.time() - t0))
+            print(f"[TICK] took={time.time()-t0:.1f}s | sleep={sleep_for:.1f}s | interval={iv}s")
+            time.sleep(sleep_for)

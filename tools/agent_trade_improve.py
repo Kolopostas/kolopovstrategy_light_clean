@@ -1,20 +1,24 @@
 # tools/agent_trade_improve.py
 # PR-сборщик: trade log + цикл по CHECK_INTERVAL для positions_guard.py
 
-import re, textwrap
+import re
+import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
 
 def write(path: Path, content: str):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     print(f"[write] {path.relative_to(ROOT)}")
 
+
 # 1) Добавим core/trade_log.py
 def upsert_trade_log():
     p = ROOT / "core" / "trade_log.py"
-    content = textwrap.dedent("""\
+    content = textwrap.dedent(
+        """\
     import os, csv
     from pathlib import Path
 
@@ -34,8 +38,10 @@ def upsert_trade_log():
             row.setdefault("extra", "")
             w.writerow(row)
             f.flush()
-    """)
+    """
+    )
     write(p, content)
+
 
 # 2) Пропатчим position_manager.py — логируем размещение/исполнение
 def patch_position_manager_logging():
@@ -49,7 +55,7 @@ def patch_position_manager_logging():
     if "from core.trade_log import append_trade_event" not in src:
         src = src.replace(
             "from core.market_info import adjust_qty_price",
-            "from core.market_info import adjust_qty_price\nfrom core.trade_log import append_trade_event"
+            "from core.market_info import adjust_qty_price\nfrom core.trade_log import append_trade_event",
         )
 
     # после create_order(...): лог order_placed
@@ -85,7 +91,8 @@ except Exception as _log_e:
 
     # мягкая проверка fill + лог order_filled (без падений)
     if "return {" in src:
-        guard_block = textwrap.dedent("""\
+        guard_block = textwrap.dedent(
+            """\
         # --- trade log: filled check ---
         try:
             filled = False
@@ -113,10 +120,14 @@ except Exception as _log_e:
         except Exception as _log_e:
             print(f"[WARN] trade-log filled: {_log_e}")
         # --- /trade log: filled check ---
-        """)
-        src = re.sub(r"(return\s+\{[^\n]+\n\s*\})", guard_block + r"\n\1", src, flags=re.M)
+        """
+        )
+        src = re.sub(
+            r"(return\s+\{[^\n]+\n\s*\})", guard_block + r"\n\1", src, flags=re.M
+        )
 
     write(p, src)
+
 
 # 3) Добавим цикл по CHECK_INTERVAL без переписывания guard’а:
 #    заменим хвост файла:
@@ -131,7 +142,10 @@ def patch_positions_guard_loop():
 
     # импорт time на всякий
     if "import time" not in src:
-        src = src.replace("from datetime import datetime, timezone", "from datetime import datetime, timezone\nimport time")
+        src = src.replace(
+            "from datetime import datetime, timezone",
+            "from datetime import datetime, timezone\nimport time",
+        )
 
     # если есть уже наш цикл — не патчим повторно
     if "AGENT_LOOP" in src:
@@ -142,13 +156,14 @@ def patch_positions_guard_loop():
     if "--once" not in src:
         src = src.replace(
             "parser = argparse.ArgumentParser()",
-            "parser = argparse.ArgumentParser()\n    parser.add_argument('--once', action='store_true', help='Один проход и выход')"
+            "parser = argparse.ArgumentParser()\n    parser.add_argument('--once', action='store_true', help='Один проход и выход')",
         )
 
     # заменим нижний блок запуска
     src = re.sub(
         r"\nif __name__ == \"__main__\":\s*\n\s*main\(\)\s*\n\Z",
-        textwrap.dedent("""\
+        textwrap.dedent(
+            """\
 
         # AGENT_LOOP: цикличный запуск по CHECK_INTERVAL (ENV), либо единичный при --once
         if __name__ == "__main__":
@@ -167,18 +182,20 @@ def patch_positions_guard_loop():
                     sleep_for = max(0.0, iv - (time.time() - t0))
                     print(f"[TICK] took={time.time()-t0:.1f}s | sleep={sleep_for:.1f}s | interval={iv}s")
                     time.sleep(sleep_for)
-        """),
+        """
+        ),
         src,
-        flags=re.M
+        flags=re.M,
     )
 
     write(p, src)
+
 
 def main():
     upsert_trade_log()
     patch_position_manager_logging()
     patch_positions_guard_loop()
 
+
 if __name__ == "__main__":
     main()
-
