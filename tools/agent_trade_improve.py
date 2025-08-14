@@ -1,18 +1,25 @@
-import os, re, sys, textwrap, json
+import json
+import os
+import re
+import sys
+import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV = ROOT / ".env.example"
 
+
 def upsert_env():
-    add = textwrap.dedent("""\
+    add = textwrap.dedent(
+        """\
     ATR_MULTIPLIER=2.0
     MAX_OPEN_TRADES=2
     SLIPPAGE_LIMIT_BPS=5
     BREAKEVEN_AFTER_RR=1.0
     USE_TRAILING_STOP=true
     REGIME_EMA=200
-    """)
+    """
+    )
     if not ENV.exists():
         ENV.write_text(add, encoding="utf-8")
         print("[env] created .env.example")
@@ -30,17 +37,20 @@ def upsert_env():
     else:
         print("[env] vars already present")
 
+
 def write_file(path: Path, content: str):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     print(f"[write] {path.relative_to(ROOT)}")
+
 
 def patch_market_info():
     p = ROOT / "core" / "market_info.py"
     base = ""
     if p.exists():
         base = p.read_text(encoding="utf-8")
-    func = textwrap.dedent("""\
+    func = textwrap.dedent(
+        """\
     def adjust_qty_price(sym, qty, price, ex=None):
         \"\"\"
         Приводит qty/price к маркет‑правилам Bybit:
@@ -72,20 +82,29 @@ def patch_market_info():
                 print(f"[WARN] {sym}: notional {notional:.6f} < min_cost {min_cost} — qty-> {qty_adj}")
 
         return qty_adj, px_adj, market
-    """)
+    """
+    )
     if "def adjust_qty_price(" in base:
-        new = re.sub(r"def adjust_qty_price\([^\0]*?\n\)\:", "def adjust_qty_price(", base)  # noop guard
+        new = re.sub(
+            r"def adjust_qty_price\([^\0]*?\n\)\:", "def adjust_qty_price(", base
+        )  # noop guard
         # грубая замена по имени функции:
-        new = re.sub(r"def\s+adjust_qty_price\s*\([^\)]*\)\s*:[\s\S]*?return\s+[^\n]+",
-                     func.strip(), base, flags=re.M)
+        new = re.sub(
+            r"def\s+adjust_qty_price\s*\([^\)]*\)\s*:[\s\S]*?return\s+[^\n]+",
+            func.strip(),
+            base,
+            flags=re.M,
+        )
     else:
         new = (base + "\n\n" if base else "") + func
     write_file(p, new)
 
+
 def patch_predict():
     p = ROOT / "core" / "predict.py"
     base = p.read_text(encoding="utf-8") if p.exists() else ""
-    block = textwrap.dedent("""\
+    block = textwrap.dedent(
+        """\
     # --- indicators & filters (agent patch) ---
     import pandas as pd
 
@@ -150,18 +169,21 @@ def patch_predict():
             "regime_ok": regime_long if side.lower()=="long" else regime_short
         }
     # --- /indicators & filters ---
-    """)
+    """
+    )
     if "# --- indicators & filters (agent patch) ---" in base:
         print("[predict] already patched")
         return
     new = (base + "\n\n" if base else "") + block
     write_file(p, new)
 
+
 def patch_position_manager():
     p = ROOT / "position_manager.py"
     base = p.read_text(encoding="utf-8") if p.exists() else ""
     # заменим/добавим open_position целиком (просто и надёжно)
-    body = textwrap.dedent("""\
+    body = textwrap.dedent(
+        """\
     import os, time, ccxt
     from dotenv import load_dotenv
     from core.market_info import adjust_qty_price
@@ -246,21 +268,28 @@ def patch_position_manager():
         order = ex.create_order(symbol, "limit", order_side, qty_adj, px_adj, params=params)
 
         return {"order": order, "qty": qty_adj, "price": px_adj, "sl": sl_price, "atr": atr, "filter_stats": stats}
-    """)
+    """
+    )
     if "def open_position(" in base:
         # заменяем существующую реализацию open_position целиком
-        new = re.sub(r"def\s+open_position\s*\([^\)]*\)\s*:[\s\S]*?$",
-                     body.strip(), base, flags=re.M)
+        new = re.sub(
+            r"def\s+open_position\s*\([^\)]*\)\s*:[\s\S]*?$",
+            body.strip(),
+            base,
+            flags=re.M,
+        )
     else:
         new = (base + "\n\n" if base else "") + body
     (ROOT / "position_manager.py").write_text(new, encoding="utf-8")
     print("[patch] position_manager.py updated")
+
 
 def main():
     upsert_env()
     patch_market_info()
     patch_predict()
     patch_position_manager()
+
 
 if __name__ == "__main__":
     main()

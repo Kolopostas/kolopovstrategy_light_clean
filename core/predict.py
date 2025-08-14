@@ -159,3 +159,69 @@ def predict_trend(
                 "SHORT": 0.4 if signal == "long" else 0.6,
             },
         }
+
+
+# --- indicators & filters (agent patch) ---
+import pandas as pd
+
+def _ema(series: pd.Series, span: int) -> pd.Series:
+    return series.ewm(span=span, adjust=False).mean()
+
+def compute_rsi(close: pd.Series, period=14) -> pd.Series:
+    delta = close.diff()
+    up = delta.clip(lower=0).ewm(alpha=1/period, adjust=False).mean()
+    down = (-delta.clip(upper=0)).ewm(alpha=1/period, adjust=False).mean()
+    rs = up / (down + 1e-12)
+    return 100 - (100 / (1 + rs))
+
+def compute_macd(close: pd.Series, fast=12, slow=26, signal=9):
+    ema_fast = _ema(close, fast); ema_slow = _ema(close, slow)
+    macd = ema_fast - ema_slow
+    sig = _ema(macd, signal)
+    hist = macd - sig
+    return macd, sig, hist
+
+def compute_atr(df: pd.DataFrame, period=14) -> pd.Series:
+    prev_close = df['close'].shift(1)
+    tr = pd.concat([
+        df['high'] - df['low'],
+        (df['high'] - prev_close).abs(),
+        (df['low'] - prev_close).abs()
+    ], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1/period, adjust=False).mean()
+    return atr
+
+def get_recent_atr(ex, symbol: str, timeframe='1h', period=14, limit=None) -> float:
+    limit = limit or (period * 3 + 2)
+    ohlcv = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+    df = pd.DataFrame(ohlcv, columns=['ts','open','high','low','close','vol'])
+    atr = compute_atr(df[['open','high','low','close']], period)
+    return float(atr.iloc[-1])
+
+def entry_filter_confirm(ex, symbol: str, side: str, timeframe='1h',
+                         rsi_thr_long=55, rsi_thr_short=45, regime_ema=200):
+    ohlcv = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=max(regime_ema, 260))
+    df = pd.DataFrame(ohlcv, columns=['ts','open','high','low','close','vol'])
+    close = df['close']
+    ema50 = _ema(close, 50).iloc[-1]
+    ema200_now = _ema(close, regime_ema).iloc[-1]
+    ema200_prev = _ema(close, regime_ema).iloc[-2]
+    rsi = compute_rsi(close, 14).iloc[-1]
+    macd, sig, hist = compute_macd(close)
+    macd_hist = float(hist.iloc[-1])
+    px = float(close.iloc[-1])
+
+    regime_long = px > ema200_now and ema200_now > ema200_prev
+    regime_short = px < ema200_now and ema200_now < ema200_prev
+
+    ok_long  = (rsi > rsi_thr_long) and (px > ema50) and (macd_hist > 0) and regime_long
+    ok_short = (rsi < rsi_thr_short) and (px < ema50) and (macd_hist < 0) and regime_short
+
+    ok = ok_long if side.lower() == "long" else ok_short
+    return bool(ok), {
+        "price": px, "rsi": float(rsi),
+        "ema50": float(ema50), "ema200": float(ema200_now),
+        "macd_hist": macd_hist,
+        "regime_ok": regime_long if side.lower()=="long" else regime_short
+    }
+# --- /indicators & filters ---
