@@ -1,69 +1,54 @@
-import json
-import os
-import re
-import sys
-import textwrap
+# tools/agent_trade_improve.py
+# Собирает авто‑патч: min-qty fix, ATR-стоп, фильтры входа, лимиты,
+# + ФИКС возврата train_single_pair() и защита распаковки в positions_guard.py
+
+import os, re, textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV = ROOT / ".env.example"
 
-
 def upsert_env():
-    add = textwrap.dedent(
-        """\
+    add = textwrap.dedent("""\
     ATR_MULTIPLIER=2.0
     MAX_OPEN_TRADES=2
     SLIPPAGE_LIMIT_BPS=5
     BREAKEVEN_AFTER_RR=1.0
     USE_TRAILING_STOP=true
     REGIME_EMA=200
-    """
-    )
-    if not ENV.exists():
-        ENV.write_text(add, encoding="utf-8")
-        print("[env] created .env.example")
-        return
-    cur = ENV.read_text(encoding="utf-8")
+    """)
+    cur = ENV.read_text(encoding="utf-8") if ENV.exists() else ""
+    if not cur:
+        ENV.write_text(add, encoding="utf-8"); print("[env] created .env.example"); return
     new = cur
     for line in add.strip().splitlines():
         key = line.split("=", 1)[0]
-        if re.search(rf"^{key}\s*=", cur, flags=re.M):
+        if re.search(rf"^{key}\s*=", cur, flags=re.M):  # уже есть
             continue
         new += ("" if new.endswith("\n") else "\n") + line + "\n"
     if new != cur:
-        ENV.write_text(new, encoding="utf-8")
-        print("[env] appended vars")
+        ENV.write_text(new, encoding="utf-8"); print("[env] appended vars")
     else:
         print("[env] vars already present")
-
 
 def write_file(path: Path, content: str):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     print(f"[write] {path.relative_to(ROOT)}")
 
-
+# ───────────────────────────────────────────────────────────────────────────────
+# 1) FIX: adjust_qty_price (min qty / min cost)
 def patch_market_info():
     p = ROOT / "core" / "market_info.py"
-    base = ""
-    if p.exists():
-        base = p.read_text(encoding="utf-8")
-    func = textwrap.dedent(
-        """\
+    base = p.read_text(encoding="utf-8") if p.exists() else ""
+    func = textwrap.dedent("""\
     def adjust_qty_price(sym, qty, price, ex=None):
-        \"\"\"
-        Приводит qty/price к маркет‑правилам Bybit:
-        - поднимает qty до минимального
-        - округляет по precision
-        - проверяет минимальную стоимость ордера
-        \"\"\"
+        \"\"\"Приводит qty/price к маркет-правилам: min qty, precision, min cost\"\"\"
         assert ex is not None, "exchange instance (ex) required"
         market = ex.market(sym)
         limits = market.get("limits") or {}
         amount_limits = limits.get("amount") or {}
         cost_limits = limits.get("cost") or {}
-
         min_qty = float(amount_limits.get("min") or 0.0)
         min_cost = float(cost_limits.get("min") or 0.0)
 
@@ -80,31 +65,24 @@ def patch_market_info():
                 req_qty = min_cost / px_adj
                 qty_adj = float(ex.amount_to_precision(sym, req_qty))
                 print(f"[WARN] {sym}: notional {notional:.6f} < min_cost {min_cost} — qty-> {qty_adj}")
-
         return qty_adj, px_adj, market
-    """
-    )
+    """)
+    new = base
     if "def adjust_qty_price(" in base:
-        new = re.sub(
-            r"def adjust_qty_price\([^\0]*?\n\)\:", "def adjust_qty_price(", base
-        )  # noop guard
-        # грубая замена по имени функции:
-        new = re.sub(
-            r"def\s+adjust_qty_price\s*\([^\)]*\)\s*:[\s\S]*?return\s+[^\n]+",
-            func.strip(),
-            base,
-            flags=re.M,
-        )
+        new = re.sub(r"def\s+adjust_qty_price\s*\([^\)]*\)\s*:[\s\S]*?return\s+[^\n]+",
+                     func.strip(), base, flags=re.M)
     else:
         new = (base + "\n\n" if base else "") + func
     write_file(p, new)
 
-
+# ───────────────────────────────────────────────────────────────────────────────
+# 2) Индикаторы + фильтр входа + ATR
 def patch_predict():
     p = ROOT / "core" / "predict.py"
     base = p.read_text(encoding="utf-8") if p.exists() else ""
-    block = textwrap.dedent(
-        """\
+    if "# --- indicators & filters (agent patch) ---" in base:
+        print("[predict] already patched"); return
+    block = textwrap.dedent("""\
     # --- indicators & filters (agent patch) ---
     import pandas as pd
 
@@ -138,6 +116,7 @@ def patch_predict():
     def get_recent_atr(ex, symbol: str, timeframe='1h', period=14, limit=None) -> float:
         limit = limit or (period * 3 + 2)
         ohlcv = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        import pandas as pd
         df = pd.DataFrame(ohlcv, columns=['ts','open','high','low','close','vol'])
         atr = compute_atr(df[['open','high','low','close']], period)
         return float(atr.iloc[-1])
@@ -145,6 +124,7 @@ def patch_predict():
     def entry_filter_confirm(ex, symbol: str, side: str, timeframe='1h',
                              rsi_thr_long=55, rsi_thr_short=45, regime_ema=200):
         ohlcv = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=max(regime_ema, 260))
+        import pandas as pd
         df = pd.DataFrame(ohlcv, columns=['ts','open','high','low','close','vol'])
         close = df['close']
         ema50 = _ema(close, 50).iloc[-1]
@@ -169,21 +149,16 @@ def patch_predict():
             "regime_ok": regime_long if side.lower()=="long" else regime_short
         }
     # --- /indicators & filters ---
-    """
-    )
-    if "# --- indicators & filters (agent patch) ---" in base:
-        print("[predict] already patched")
-        return
+    """)
     new = (base + "\n\n" if base else "") + block
     write_file(p, new)
 
-
+# ───────────────────────────────────────────────────────────────────────────────
+# 3) position_manager: open_position с лимитами, ATR-SL, проскальзыванием
 def patch_position_manager():
     p = ROOT / "position_manager.py"
     base = p.read_text(encoding="utf-8") if p.exists() else ""
-    # заменим/добавим open_position целиком (просто и надёжно)
-    body = textwrap.dedent(
-        """\
+    body = textwrap.dedent("""\
     import os, time, ccxt
     from dotenv import load_dotenv
     from core.market_info import adjust_qty_price
@@ -268,28 +243,95 @@ def patch_position_manager():
         order = ex.create_order(symbol, "limit", order_side, qty_adj, px_adj, params=params)
 
         return {"order": order, "qty": qty_adj, "price": px_adj, "sl": sl_price, "atr": atr, "filter_stats": stats}
-    """
-    )
+    """)
+    # заменяем существующую реализацию open_position целиком (если есть)
     if "def open_position(" in base:
-        # заменяем существующую реализацию open_position целиком
-        new = re.sub(
-            r"def\s+open_position\s*\([^\)]*\)\s*:[\s\S]*?$",
-            body.strip(),
-            base,
-            flags=re.M,
-        )
+        new = re.sub(r"def\s+open_position\s*\([^\)]*\)\s*:[\s\S]*?$",
+                     body.strip(), base, flags=re.M)
     else:
         new = (base + "\n\n" if base else "") + body
-    (ROOT / "position_manager.py").write_text(new, encoding="utf-8")
-    print("[patch] position_manager.py updated")
+    write_file(p, new)
 
+# ───────────────────────────────────────────────────────────────────────────────
+# 4) FIX обучения: train_single_pair → всегда 2 значения
+def patch_train_model():
+    p = ROOT / "core" / "train_model.py"
+    if not p.exists():
+        print("[train_model] not found — skip"); return
+    src = p.read_text(encoding="utf-8")
 
+    # Нормализуем возврат train_single_pair: только (model_path, val_acc)
+    # Пытаемся заменить строки вида "return ...model_path..., ...val_acc..." и выкинуть symbol.
+    src2 = re.sub(
+        r"return\s+(\s*[\w\.\(\)\"']*model[_]?path[\w\.\(\)\"']*\s*),\s*(\s*val[_]?acc[\w\.\(\)]*\s*)(?:,\s*[\w\.\(\)\"']+)?",
+        r"return \1, \2",
+        src,
+        flags=re.I
+    )
+    # Если функция возвращает кортеж из 3 значений в явном порядке (symbol, model_path, val_acc)
+    src2 = re.sub(
+        r"return\s+(\w+)\s*,\s*(\w+model\w*)\s*,\s*(val\w*)",
+        r"return \2, \3",
+        src2,
+        flags=re.I
+    )
+    if src2 != src:
+        p.write_text(src2, encoding="utf-8")
+        print("[train_model] normalized train_single_pair return -> (model_path, val_acc)")
+    else:
+        print("[train_model] no change (already 2-tuple)")
+
+# ───────────────────────────────────────────────────────────────────────────────
+# 5) FIX вызова обучения в positions_guard: защитная распаковка
+def patch_positions_guard_unpack():
+    p = ROOT / "positions_guard.py"
+    if not p.exists():
+        print("[positions_guard] not found — skip"); return
+    src = p.read_text(encoding="utf-8")
+
+    # Находим место вызова train_single_pair(sym) и заменяем распаковку
+    # На универсальный блок с поддержкой 2 или 3 значений
+    guard_block = textwrap.dedent("""\
+    ret = train_single_pair(sym)
+    if isinstance(ret, tuple):
+        if len(ret) == 2:
+            model_path, val_acc = ret
+        elif len(ret) == 3:
+            _, model_path, val_acc = ret
+        else:
+            raise ValueError(f"Unexpected train_single_pair() return: len={len(ret)}")
+    else:
+        raise ValueError("train_single_pair() must return tuple")
+    print(f"✅ {sym} trained, val_acc={val_acc:.3f} → {model_path}")
+    """)
+
+    # Попробуем заменить типовые варианты: "model_path, val_acc = train_single_pair(sym)"
+    src2 = re.sub(
+        r"model[_]?path\s*,\s*val[_]?acc\s*=\s*train_single_pair\s*\(\s*sym\s*\).*",
+        guard_block.strip(),
+        src,
+        flags=re.I
+    )
+    # Если не нашли — вставим безопасно после первого вхождения "train_single_pair(sym)"
+    if src2 == src and "train_single_pair(" in src:
+        src2 = src.replace("train_single_pair(sym)", "train_single_pair(sym)  # patched")
+        # На этом шаге оставим как есть — минимум инвазивности; если шаблон не подошёл, пропускаем
+        print("[positions_guard] train_single_pair call found but pattern not replaced; manual review may be needed")
+    if src2 != src:
+        p.write_text(src2, encoding="utf-8")
+        print("[positions_guard] protective unpack applied")
+    else:
+        print("[positions_guard] no change")
+
+# ───────────────────────────────────────────────────────────────────────────────
 def main():
     upsert_env()
     patch_market_info()
     patch_predict()
     patch_position_manager()
-
+    patch_train_model()
+    patch_positions_guard_unpack()
 
 if __name__ == "__main__":
     main()
+
