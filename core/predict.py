@@ -1,3 +1,4 @@
+# core/predict.py
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -42,14 +43,20 @@ def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     return rsi
 
 
+def _ema(series: pd.Series, span: int) -> pd.Series:
+    return series.ewm(span=span, adjust=False).mean()
+
+
 def compute_macd(
     series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9
-) -> Tuple[pd.Series, pd.Series]:
-    ema_fast = series.ewm(span=fast, adjust=False).mean()
-    ema_slow = series.ewm(span=slow, adjust=False).mean()
+) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    """Возвращает macd, signal, hist."""
+    ema_fast = _ema(series, fast)
+    ema_slow = _ema(series, slow)
     macd = ema_fast - ema_slow
-    sig = macd.ewm(span=signal, adjust=False).mean()
-    return macd, sig
+    sig = _ema(macd, signal)
+    hist = macd - sig
+    return macd, sig, hist
 
 
 def train_model_for_pair(
@@ -61,7 +68,7 @@ def train_model_for_pair(
 
     df["ema"] = df["close"].ewm(span=50, adjust=False).mean()
     df["rsi"] = compute_rsi(df["close"], period=14)
-    macd, sig = compute_macd(df["close"])
+    macd, sig, _hist = compute_macd(df["close"])
     df["macd"] = macd
     df["signal"] = sig
     df = df.dropna().reset_index(drop=True)
@@ -131,7 +138,7 @@ def predict_trend(
 
     df["ema"] = df["close"].ewm(span=50, adjust=False).mean()
     df["rsi"] = compute_rsi(df["close"], period=14)
-    macd, sig = compute_macd(df["close"])
+    macd, sig, _hist = compute_macd(df["close"])
     df["macd"] = macd
     df["signal"] = sig
     df = df.dropna().reset_index(drop=True)
@@ -161,30 +168,7 @@ def predict_trend(
         }
 
 
-# --- indicators & filters (agent patch) ---
-import pandas as pd
-
-
-def _ema(series: pd.Series, span: int) -> pd.Series:
-    return series.ewm(span=span, adjust=False).mean()
-
-
-def compute_rsi(close: pd.Series, period=14) -> pd.Series:
-    delta = close.diff()
-    up = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
-    down = (-delta.clip(upper=0)).ewm(alpha=1 / period, adjust=False).mean()
-    rs = up / (down + 1e-12)
-    return 100 - (100 / (1 + rs))
-
-
-def compute_macd(close: pd.Series, fast=12, slow=26, signal=9):
-    ema_fast = _ema(close, fast)
-    ema_slow = _ema(close, slow)
-    macd = ema_fast - ema_slow
-    sig = _ema(macd, signal)
-    hist = macd - sig
-    return macd, sig, hist
-
+# ---- indicators & filters (без дубликатов) ----
 
 def compute_atr(df: pd.DataFrame, period=14) -> pd.Series:
     prev_close = df["close"].shift(1)
@@ -245,6 +229,3 @@ def entry_filter_confirm(
         "macd_hist": macd_hist,
         "regime_ok": regime_long if side.lower() == "long" else regime_short,
     }
-
-
-# --- /indicators & filters ---
