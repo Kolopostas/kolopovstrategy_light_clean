@@ -4,19 +4,23 @@
 #  - логирование order_placed / order_filled в position_manager.open_position
 #  - безопасный пост-чек без падений
 
-import re, textwrap
+import re
+import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
 
 def write(path: Path, content: str):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     print(f"[write] {path.relative_to(ROOT)}")
 
+
 def upsert_trade_log():
     p = ROOT / "core" / "trade_log.py"
-    content = textwrap.dedent("""\
+    content = textwrap.dedent(
+        """\
     import os, csv
     from pathlib import Path
 
@@ -36,8 +40,10 @@ def upsert_trade_log():
             row.setdefault("extra", "")
             w.writerow(row)
             f.flush()
-    """)
+    """
+    )
     write(p, content)
+
 
 def patch_position_manager_logging():
     p = ROOT / "position_manager.py"
@@ -47,7 +53,7 @@ def patch_position_manager_logging():
     if "from core.trade_log import append_trade_event" not in src:
         src = src.replace(
             "from core.market_info import adjust_qty_price",
-            "from core.market_info import adjust_qty_price\nfrom core.trade_log import append_trade_event"
+            "from core.market_info import adjust_qty_price\nfrom core.trade_log import append_trade_event",
         )
 
     # 2) после create_order(...) вставить лог order_placed
@@ -83,7 +89,8 @@ except Exception as _log_e:
         )
 
     # 3) мягкий пост-чек fill + лог order_filled (без падений)
-    guard_block = textwrap.dedent("""\
+    guard_block = textwrap.dedent(
+        """\
     # --- trade log: filled check ---
     try:
         filled = False
@@ -111,17 +118,22 @@ except Exception as _log_e:
     except Exception as _log_e:
         print(f"[WARN] trade-log filled: {_log_e}")
     # --- /trade log: filled check ---
-    """)
+    """
+    )
 
     # Добавим пост-чек в конец функции open_position (перед return)
     if "def open_position" in src and "return {" in src:
-        src = re.sub(r"(return\s+\{[^\n]+\n\s*\})", guard_block + r"\n\1", src, flags=re.M)
+        src = re.sub(
+            r"(return\s+\{[^\n]+\n\s*\})", guard_block + r"\n\1", src, flags=re.M
+        )
 
     write(p, src)
+
 
 def main():
     upsert_trade_log()
     patch_position_manager_logging()
+
 
 if __name__ == "__main__":
     main()

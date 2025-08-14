@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 
 from core.bybit_exchange import create_exchange, normalize_symbol
 from core.market_info import adjust_qty_price
+from core.trade_log import append_trade_event
 
 
 def _calc_order_qty(
