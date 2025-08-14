@@ -10,13 +10,13 @@ def train_many(pairs, timeframe="30m", limit=3000, model_dir="models"):
     for sym in pairs:
         print(f"\n📈 Обучение модели для {sym}...")
         try:
-            symbol, category = sym.split(":")
             acc = train_model_for_pair(
-                symbol, category, timeframe=timeframe, limit=limit, model_dir=model_dir
+                sym, timeframe=timeframe, limit=limit, model_dir=model_dir
             )
             print(f"✅ {sym} — готово, вал.точность {acc:.4f}")
         except Exception as e:
             print(f"⚠️ {sym} — ошибка обучения: {e}")
+
 
 
 def main():
