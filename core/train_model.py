@@ -12,8 +12,7 @@ def train_many(pairs, timeframe="30m", limit=3000, model_dir="models"):
         try:
             symbol, category = sym.split(":")
             acc = train_model_for_pair(
-                symbol, category,
-                timeframe=timeframe, limit=limit, model_dir=model_dir
+                symbol, category, timeframe=timeframe, limit=limit, model_dir=model_dir
             )
             print(f"✅ {sym} — готово, вал.точность {acc:.4f}")
         except Exception as e:
