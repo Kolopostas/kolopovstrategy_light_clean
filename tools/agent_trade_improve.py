@@ -1,201 +1,129 @@
-# tools/agent_trade_improve.py
-# PR-сборщик: trade log + цикл по CHECK_INTERVAL для positions_guard.py
+# tools/agent_log_uploader.py
+# Создаёт PR: добавляет uploader и хук в trade_log.append_trade_event для автопуша logs/trades.csv в GitHub
 
-import re
-import textwrap
+import base64, json, textwrap, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def write(p: Path, s: str):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(s, encoding="utf-8")
+    print("[write]", p.relative_to(ROOT))
 
-def write(path: Path, content: str):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    print(f"[write] {path.relative_to(ROOT)}")
-
-
-# 1) Добавим core/trade_log.py
-def upsert_trade_log():
-    p = ROOT / "core" / "trade_log.py"
-    content = textwrap.dedent(
-        """\
-    import os, csv
+def upsert_uploader():
+    code = textwrap.dedent("""\
+    # core/log_uploader.py
+    import os, time, json, base64, hashlib
     from pathlib import Path
+    import urllib.request, urllib.error
 
-    LOG_PATH = Path(os.getenv("TRADE_LOG_PATH", "logs/trades.csv"))
+    GH_TOKEN   = os.getenv("GH_TOKEN")
+    GH_REPO    = os.getenv("GH_REPO")
+    GH_BRANCH  = os.getenv("GH_BRANCH", "logs")
+    GH_PATH    = os.getenv("GH_PATH", "logs/trades.csv")
+    UPLOAD_EVERY_SEC = int(os.getenv("UPLOAD_EVERY_SEC", "60"))
 
-    def append_trade_event(row: dict):
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        write_header = not LOG_PATH.exists()
-        with LOG_PATH.open("a", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=[
-                "ts","event","symbol","side","qty","price","sl","tp",
-                "order_id","link_id","mode","extra"
-            ])
-            if write_header:
-                w.writeheader()
-            row.setdefault("tp", "")
-            row.setdefault("extra", "")
-            w.writerow(row)
-            f.flush()
-    """
-    )
-    write(p, content)
+    _last_push_ts = 0
+    _last_etag    = ""
 
+    def _sha256_file(path: Path) -> str:
+        h = hashlib.sha256()
+        with path.open("rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        return h.hexdigest()
 
-# 2) Пропатчим position_manager.py — логируем размещение/исполнение
-def patch_position_manager_logging():
-    p = ROOT / "position_manager.py"
-    if not p.exists():
-        print("[skip] position_manager.py not found")
-        return
-    src = p.read_text(encoding="utf-8")
-
-    # импорт логгера
-    if "from core.trade_log import append_trade_event" not in src:
-        src = src.replace(
-            "from core.market_info import adjust_qty_price",
-            "from core.market_info import adjust_qty_price\nfrom core.trade_log import append_trade_event",
-        )
-
-    # после create_order(...): лог order_placed
-    pattern_create = r"(order\s*=\s*ex\.create_order\([^\n]+?\)\s*)"
-    if re.search(pattern_create, src):
-        src = re.sub(
-            pattern_create,
-            r"""\\1
-
-# --- trade log: placed ---
-try:
-    import time, os
-    append_trade_event({
-        "ts": time.time(),
-        "event": "order_placed",
-        "symbol": symbol,
-        "side": order_side,
-        "qty": qty_adj,
-        "price": px_adj,
-        "sl": sl_price,
-        "tp": locals().get("tp_price", ""),
-        "link_id": (order.get("clientOrderId") or order.get("orderLinkId") or order.get("info", {}).get("orderLinkId")),
-        "order_id": order.get("id"),
-        "mode": "LIVE" if os.getenv("MODE","DRY").upper()=="LIVE" and not os.getenv("DRY_RUN") else "DRY",
-    })
-except Exception as _log_e:
-    print(f"[WARN] trade-log place: {_log_e}")
-# --- /trade log: placed ---
-""",
-            src,
-            flags=re.M,
-        )
-
-    # мягкая проверка fill + лог order_filled (без падений)
-    if "return {" in src:
-        guard_block = textwrap.dedent(
-            """\
-        # --- trade log: filled check ---
+    def _github_get_file_sha():
+        if not (GH_TOKEN and GH_REPO and GH_BRANCH and GH_PATH):
+            return None
+        url = f"https://api.github.com/repos/{GH_REPO}/contents/{GH_PATH}?ref={GH_BRANCH}"
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {GH_TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        })
         try:
-            filled = False
-            link_id = (order.get("clientOrderId") or order.get("orderLinkId") or order.get("info", {}).get("orderLinkId"))
-            try:
-                oo = ex.fetch_open_orders(symbol, params={"orderLinkId": link_id} if link_id else {})
-                filled = (len(oo) == 0)
-            except Exception:
-                pass
-            if filled:
-                import time, os
-                append_trade_event({
-                    "ts": time.time(),
-                    "event": "order_filled",
-                    "symbol": symbol,
-                    "side": order_side,
-                    "qty": qty_adj,
-                    "price": px_adj,
-                    "sl": sl_price,
-                    "tp": locals().get("tp_price", ""),
-                    "order_id": order.get("id"),
-                    "link_id": link_id,
-                    "mode": "LIVE" if os.getenv("MODE","DRY").upper()=="LIVE" and not os.getenv("DRY_RUN") else "DRY",
-                })
-        except Exception as _log_e:
-            print(f"[WARN] trade-log filled: {_log_e}")
-        # --- /trade log: filled check ---
-        """
-        )
-        src = re.sub(
-            r"(return\s+\{[^\n]+\n\s*\})", guard_block + r"\n\1", src, flags=re.M
-        )
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read().decode("utf-8"))
+                return data.get("sha")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            raise
 
-    write(p, src)
+    def _github_put_file(content_b64: str, sha: str | None, message: str):
+        url = f"https://api.github.com/repos/{GH_REPO}/contents/{GH_PATH}"
+        body = {
+            "message": message,
+            "content": content_b64,
+            "branch": GH_BRANCH,
+        }
+        if sha:
+            body["sha"] = sha
+        req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), headers={
+            "Authorization": f"Bearer {GH_TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+        }, method="PUT")
+        with urllib.request.urlopen(req, timeout=20) as r:
+            r.read()
 
+    def push_file_if_needed(local_path: str | Path, reason: str = "trade-log update"):
+        global _last_push_ts, _last_etag
+        if not (GH_TOKEN and GH_REPO):
+            return  # нет конфигурации — тихо выходим
 
-# 3) Добавим цикл по CHECK_INTERVAL без переписывания guard’а:
-#    заменим хвост файла:
-#    if __name__ == "__main__": main()
-#    -> обёртка, которая вызывает main() в цикле (если не --once)
-def patch_positions_guard_loop():
-    p = ROOT / "positions_guard.py"
+        path = Path(local_path)
+        if not path.exists():
+            return
+
+        # дебаунс
+        now = time.time()
+        if now - _last_push_ts < UPLOAD_EVERY_SEC:
+            return
+
+        # если файл не менялся — не пушим
+        etag = _sha256_file(path)
+        if etag == _last_etag:
+            return
+
+        content = path.read_bytes()
+        b64 = base64.b64encode(content).decode("ascii")
+        sha = _github_get_file_sha()
+        try:
+            _github_put_file(b64, sha, f"{reason}: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            _last_push_ts = now
+            _last_etag = etag
+            print(f"[log_uploader] pushed {GH_PATH} to {GH_REPO}@{GH_BRANCH} ({len(content)} bytes)")
+        except Exception as e:
+            print(f"[log_uploader] push failed: {e}")
+    """)
+    write(ROOT / "core" / "log_uploader.py", code)
+
+def patch_trade_log():
+    p = ROOT / "core" / "trade_log.py"
     if not p.exists():
-        print("[skip] positions_guard.py not found")
+        print("[ERR] core/trade_log.py not found (должен быть уже добавлен агентом ранее).")
         return
     src = p.read_text(encoding="utf-8")
-
-    # импорт time на всякий
-    if "import time" not in src:
+    if "from core.log_uploader import push_file_if_needed" not in src:
         src = src.replace(
-            "from datetime import datetime, timezone",
-            "from datetime import datetime, timezone\nimport time",
+            "from pathlib import Path",
+            "from pathlib import Path\nfrom core.log_uploader import push_file_if_needed"
         )
-
-    # если есть уже наш цикл — не патчим повторно
-    if "AGENT_LOOP" in src:
-        write(p, src)
-        return
-
-    # добавим поддержку --once (если нет парсинга — оставим как есть)
-    if "--once" not in src:
+    # после записи строки — вызывать аплоадер
+    if "push_file_if_needed(" not in src:
         src = src.replace(
-            "parser = argparse.ArgumentParser()",
-            "parser = argparse.ArgumentParser()\n    parser.add_argument('--once', action='store_true', help='Один проход и выход')",
+            "w.writerow(row)\n            f.flush()",
+            "w.writerow(row)\n            f.flush()\n        try:\n            push_file_if_needed(str(LOG_PATH), reason='trade-log')\n        except Exception as _e:\n            print(f\"[log_uploader] skip: {_e}\")"
         )
-
-    # заменим нижний блок запуска
-    src = re.sub(
-        r"\nif __name__ == \"__main__\":\s*\n\s*main\(\)\s*\n\Z",
-        textwrap.dedent(
-            """\
-
-        # AGENT_LOOP: цикличный запуск по CHECK_INTERVAL (ENV), либо единичный при --once
-        if __name__ == "__main__":
-            import sys, os
-            iv = int(os.getenv("CHECK_INTERVAL", os.getenv("CHECK_INTERVAL_SECONDS", "30")))
-            if "--once" in sys.argv:
-                main()
-            else:
-                print(f"[CONFIG] CHECK_INTERVAL={iv}s")
-                while True:
-                    t0 = time.time()
-                    try:
-                        main()
-                    except Exception as e:
-                        print(f"[LOOP ERR] {e}")
-                    sleep_for = max(0.0, iv - (time.time() - t0))
-                    print(f"[TICK] took={time.time()-t0:.1f}s | sleep={sleep_for:.1f}s | interval={iv}s")
-                    time.sleep(sleep_for)
-        """
-        ),
-        src,
-        flags=re.M,
-    )
-
     write(p, src)
-
 
 def main():
-    upsert_trade_log()
-    patch_position_manager_logging()
-    patch_positions_guard_loop()
-
+    upsert_uploader()
+    patch_trade_log()
 
 if __name__ == "__main__":
     main()
