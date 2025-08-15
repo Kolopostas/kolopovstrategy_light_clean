@@ -27,22 +27,22 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt || true
+          pip install -r requirements.txt
           pip install pyright flake8 bandit vulture isort black
 
       - name: Static checks
         run: |
-          python tools/syntax_check.py || true
-          flake8 . || true
-          bandit -q -r . || true
-          vulture . || true
-          isort --check --diff . || true
-          black --check . || true
+          python tools/syntax_check.py 
+          flake8 .
+          bandit -q -r .
+          vulture .
+          isort --check --diff .
+          black --check .
 
       - name: Agent patches
         run: |
-          python tools/agent_trade_improve.py || true
-          python tools/agent_log_uploader.py || true
+          python tools/agent_trade_improve.py
+          python tools/agent_log_uploader.py
 
       - name: Create PR with changes
         uses: peter-evans/create-pull-request@v6
