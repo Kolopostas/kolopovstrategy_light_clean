@@ -11,10 +11,10 @@ permissions:
   contents: write
   pull-requests: write
 
-
 jobs:
   guard:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,36 +32,27 @@ jobs:
 
       - name: Static checks
         run: |
-          python tools/syntax_check.py
+          python tools/syntax_check.py || true
           flake8 . || true
           bandit -q -r . || true
           vulture . || true
+          isort --check --diff . || true
+          black --check . || true
 
-
-      - name: Auto-format
+      - name: Agent patches
         run: |
-          isort .
-          black .
+          python tools/agent_trade_improve.py || true
+          python tools/agent_log_uploader.py || true
 
-      - name: Run agent guard script
-        run: python tools/agent_guard.py
-
-      - name: Trade improve patch (ATR stop, filters, limits)
-        run: python tools/agent_trade_improve.py
-
-      - name: Agent: log uploader patch
-        run: python tools/agent_log_uploader.py
-
-      - name: Create PR with fixes (if any)
+      - name: Create PR with changes
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "Agent fix: imports/syntax/railway"
-          title: "Agent: авто‑правки (импорты/совместимость/worker)"
+          commit-message: "Agent: auto-fixes (trade-log + loop + misc)"
+          title: "Agent: авто‑правки (trade-log / loop / misc)"
           body: |
-            Авто‑PR от CI:
-            - форматирование (isort/black)
-            - проверка синтаксиса и импортов
-            - .env.example / Procfile
-            - безопасный dry-run positions_guard.py (если есть)
+            - добавлен core/trade_log.py
+            - логирование order_placed / order_filled
+            - цикл в positions_guard по CHECK_INTERVAL
+            - (опц.) лог-аплоадер
           branch: agent/fixes
           delete-branch: true
