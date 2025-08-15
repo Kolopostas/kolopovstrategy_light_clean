@@ -193,3 +193,6 @@
 +                        json.dump(last_trade_at, f)
 +                except Exception as _e:
 +                    print("[WARN] cooldown save:", _e)
+
+
+
