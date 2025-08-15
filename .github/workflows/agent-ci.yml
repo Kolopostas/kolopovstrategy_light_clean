@@ -49,6 +49,8 @@ jobs:
       - name: Trade improve patch (ATR stop, filters, limits)
         run: python tools/agent_trade_improve.py
 
+      - name: Agent: log uploader patch
+        run: python tools/agent_log_uploader.py
 
       - name: Create PR with fixes (if any)
         uses: peter-evans/create-pull-request@v6
