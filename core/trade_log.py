@@ -1,5 +1,6 @@
 import os, csv
 from pathlib import Path
+from core.log_uploader import push_file_if_needed
 
 LOG_PATH = Path(os.getenv("TRADE_LOG_PATH", "logs/trades.csv"))
 
