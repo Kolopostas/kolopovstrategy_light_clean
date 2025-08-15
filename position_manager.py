@@ -33,7 +33,27 @@ def open_position(
     Dry-run: если DRY_RUN=1 в окружении — ничего не отправляет.
     """
     if os.getenv("DRY_RUN", "").strip() == "1":
-        return {"status": "dry", "reason": "DRY_RUN=1", "symbol": symbol, "side": side}
+        
+# --- trade log: filled (best-effort) ---
+try:
+    _oid = (o.get("id") or o.get("orderId"))
+    append_trade_event({
+        "ts": time.time(),
+        "event": "order_filled",
+        "symbol": sym,
+        "side": order_side,
+        "qty": qty,
+        "price": px,
+        "tp": tp_price,
+        "sl": sl_price,
+        "order_id": _oid,
+        "link_id": o.get("clientOrderId") or o.get("orderLinkId") or (o.get("info", {}) or {}).get("orderLinkId"),
+        "mode": "LIVE",
+    })
+except Exception as _e:
+    print("[WARN] trade-log filled:", _e)
+# --- /trade log: filled ---
+return {"status": "dry", "reason": "DRY_RUN=1", "symbol": symbol, "side": side}
 
     ex = create_exchange()
     sym = normalize_symbol(symbol)
@@ -53,7 +73,27 @@ def open_position(
     qty_raw = _calc_order_qty(usdt, price, risk_fraction, leverage)
     qty, px, market = adjust_qty_price(sym, qty_raw, price)
     if qty <= 0:
-        return {
+        
+# --- trade log: filled (best-effort) ---
+try:
+    _oid = (o.get("id") or o.get("orderId"))
+    append_trade_event({
+        "ts": time.time(),
+        "event": "order_filled",
+        "symbol": sym,
+        "side": order_side,
+        "qty": qty,
+        "price": px,
+        "tp": tp_price,
+        "sl": sl_price,
+        "order_id": _oid,
+        "link_id": o.get("clientOrderId") or o.get("orderLinkId") or (o.get("info", {}) or {}).get("orderLinkId"),
+        "mode": "LIVE",
+    })
+except Exception as _e:
+    print("[WARN] trade-log filled:", _e)
+# --- /trade log: filled ---
+return {
             "status": "error",
             "reason": "qty<=0 after adjust",
             "balance": usdt,
@@ -91,13 +131,49 @@ def open_position(
         },
     )
     try:
-        o = ex.create_order(
-            sym, type="market", side=order_side, amount=qty, price=None, params=params
-        )
+        o = ex.create_order(sym, type="market", side=order_side, amount=qty, price=None, params=params)
+# --- trade log: placed ---
+try:
+    append_trade_event({
+        "ts": time.time(),
+        "event": "order_placed",
+        "symbol": sym,
+        "side": order_side,
+        "qty": qty,
+        "price": px,
+        "tp": tp_price,
+        "sl": sl_price,
+        "order_id": o.get("id") or o.get("orderId"),
+        "link_id": o.get("clientOrderId") or o.get("orderLinkId") or (o.get("info", {}) or {}).get("orderLinkId"),
+        "mode": "LIVE",
+    })
+except Exception as _e:
+    print("[WARN] trade-log placed:", _e)
+# --- /trade log: placed ---
         oid = o.get("id") or o.get("orderId")
         if oid:
             o = _wait_fill(ex, sym, oid)
-        return {
+        
+# --- trade log: filled (best-effort) ---
+try:
+    _oid = (o.get("id") or o.get("orderId"))
+    append_trade_event({
+        "ts": time.time(),
+        "event": "order_filled",
+        "symbol": sym,
+        "side": order_side,
+        "qty": qty,
+        "price": px,
+        "tp": tp_price,
+        "sl": sl_price,
+        "order_id": _oid,
+        "link_id": o.get("clientOrderId") or o.get("orderLinkId") or (o.get("info", {}) or {}).get("orderLinkId"),
+        "mode": "LIVE",
+    })
+except Exception as _e:
+    print("[WARN] trade-log filled:", _e)
+# --- /trade log: filled ---
+return {
             "status": (o.get("status") or "unknown"),
             "order": o,
             "qty": qty,
@@ -109,15 +185,75 @@ def open_position(
     except Exception as e:
         msg = str(e)
         if "10001" in msg:
-            return {
+            
+# --- trade log: filled (best-effort) ---
+try:
+    _oid = (o.get("id") or o.get("orderId"))
+    append_trade_event({
+        "ts": time.time(),
+        "event": "order_filled",
+        "symbol": sym,
+        "side": order_side,
+        "qty": qty,
+        "price": px,
+        "tp": tp_price,
+        "sl": sl_price,
+        "order_id": _oid,
+        "link_id": o.get("clientOrderId") or o.get("orderLinkId") or (o.get("info", {}) or {}).get("orderLinkId"),
+        "mode": "LIVE",
+    })
+except Exception as _e:
+    print("[WARN] trade-log filled:", _e)
+# --- /trade log: filled ---
+return {
                 "status": "retryable",
                 "reason": "10001 invalid request",
                 "error": msg,
             }
         if "110043" in msg:
-            return {
+            
+# --- trade log: filled (best-effort) ---
+try:
+    _oid = (o.get("id") or o.get("orderId"))
+    append_trade_event({
+        "ts": time.time(),
+        "event": "order_filled",
+        "symbol": sym,
+        "side": order_side,
+        "qty": qty,
+        "price": px,
+        "tp": tp_price,
+        "sl": sl_price,
+        "order_id": _oid,
+        "link_id": o.get("clientOrderId") or o.get("orderLinkId") or (o.get("info", {}) or {}).get("orderLinkId"),
+        "mode": "LIVE",
+    })
+except Exception as _e:
+    print("[WARN] trade-log filled:", _e)
+# --- /trade log: filled ---
+return {
                 "status": "ok_with_warning",
                 "warning": "110043 leverage not modified",
                 "qty": qty,
             }
-        return {"status": "error", "error": msg, "qty": qty, "price": px}
+        
+# --- trade log: filled (best-effort) ---
+try:
+    _oid = (o.get("id") or o.get("orderId"))
+    append_trade_event({
+        "ts": time.time(),
+        "event": "order_filled",
+        "symbol": sym,
+        "side": order_side,
+        "qty": qty,
+        "price": px,
+        "tp": tp_price,
+        "sl": sl_price,
+        "order_id": _oid,
+        "link_id": o.get("clientOrderId") or o.get("orderLinkId") or (o.get("info", {}) or {}).get("orderLinkId"),
+        "mode": "LIVE",
+    })
+except Exception as _e:
+    print("[WARN] trade-log filled:", _e)
+# --- /trade log: filled ---
+return {"status": "error", "error": msg, "qty": qty, "price": px}

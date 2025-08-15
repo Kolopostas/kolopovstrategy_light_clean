@@ -2,6 +2,7 @@
 # Агент: автопатчи (predict/logging/github_upload) + автоформатирование
 
 from __future__ import annotations
+
 import re
 import subprocess
 from pathlib import Path
@@ -221,8 +222,8 @@ def add_requests_to_requirements():
 
 def run_formatters():
     # форматируем весь репозиторий — убираем E401/E501 и ошибки isort/black
-    subprocess.run([ "python", "-m", "isort", "." ], cwd=ROOT, check=False)
-    subprocess.run([ "python", "-m", "black", "." ], cwd=ROOT, check=False)
+    subprocess.run(["python", "-m", "isort", "."], cwd=ROOT, check=False)
+    subprocess.run(["python", "-m", "black", "."], cwd=ROOT, check=False)
 
 
 def main():
