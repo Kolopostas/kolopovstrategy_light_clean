@@ -33,27 +33,26 @@ def open_position(
     Dry-run: если DRY_RUN=1 в окружении — ничего не отправляет.
     """
     if os.getenv("DRY_RUN", "").strip() == "1":
-        
-# --- trade log: filled (best-effort) ---
-try:
-    _oid = (o.get("id") or o.get("orderId"))
-    append_trade_event({
-        "ts": time.time(),
-        "event": "order_filled",
-        "symbol": sym,
-        "side": order_side,
-        "qty": qty,
-        "price": px,
-        "tp": tp_price,
-        "sl": sl_price,
-        "order_id": _oid,
-        "link_id": o.get("clientOrderId") or o.get("orderLinkId") or (o.get("info", {}) or {}).get("orderLinkId"),
-        "mode": "LIVE",
-    })
-except Exception as _e:
-    print("[WARN] trade-log filled:", _e)
-# --- /trade log: filled ---
-return {"status": "dry", "reason": "DRY_RUN=1", "symbol": symbol, "side": side}
+    # --- trade log: filled (best-effort) ---
+    try:
+        _oid = (o.get("id") or o.get("orderId"))
+        append_trade_event({
+            "ts": time.time(),
+            "event": "order_filled",
+            "symbol": sym,
+            "side": order_side,
+            "qty": qty,
+            "price": px,
+            "tp": tp_price,
+            "sl": sl_price,
+            "order_id": _oid,
+            "link_id": o.get("clientOrderId") or o.get("orderLinkId") or (o.get("info", {}) or {}).get("orderLinkId"),
+            "mode": "LIVE",
+        })
+    except Exception as _e:
+        print("[WARN] trade-log filled:", _e)
+    # --- /trade log: filled ---
+    return {"status": "dry", "reason": "DRY_RUN=1", "symbol": symbol, "side": side}
 
     ex = create_exchange()
     sym = normalize_symbol(symbol)
