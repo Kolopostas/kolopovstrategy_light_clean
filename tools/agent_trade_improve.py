@@ -1,198 +1,73 @@
-*** a/.gitignore
---- b/.gitignore
+diff --git a/.gitignore b/.gitignore
+index 7b1d2b3..a1c5d88 100644
+--- a/.gitignore
++++ b/.gitignore
 @@
+ # Logs
 -logs/
-+# Игнорим всё в logs/, кроме нужных файлов
-+/logs/*
-+!/logs/.gitkeep
-+!/logs/trades.csv
-+!/logs/cooldown.json
-
-*** /dev/null
---- b/logs/.gitkeep
++# Исключаем только временные файлы логов, но сохраняем trades.csv
++logs/*.log
++!logs/trades.csv
+diff --git a/core/position_manager.py b/core/position_manager.py
+index 1234567..89abcde 100644
+--- a/core/position_manager.py
++++ b/core/position_manager.py
 @@
-+(keep)
-
-*** /dev/null
---- b/core/trade_log.py
+ import os
+ import time
+ import csv
++import requests
+ 
+ # 🔹 Константа вместо COOLDOWN_MIN
+-COOLDOWN_MIN = int(os.getenv("COOLDOWN_MIN", 5))
++COOLDOWN_SEC = int(os.getenv("COOLDOWN_SEC", 300))
+ 
+ TRADE_LOG_PATH = os.getenv("TRADE_LOG_PATH", "logs/trades.csv")
++GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
++GITHUB_REPO = os.getenv("GITHUB_REPO")  # Формат: "username/repo"
+ 
+ last_trade_time = 0
+ 
+ def open_position(symbol, side, qty, entry_price, tp_price, sl_price):
+     global last_trade_time
+-    if time.time() - last_trade_time < COOLDOWN_MIN * 60:
+-        print(f"⏳ Ожидаем {COOLDOWN_MIN} минут перед следующей сделкой.")
++    if time.time() - last_trade_time < COOLDOWN_SEC:
++        print(f"⏳ Ожидаем {COOLDOWN_SEC} секунд перед следующей сделкой.")
+         return
+ 
+     last_trade_time = time.time()
 @@
-+import os, csv
-+from pathlib import Path
+     # ✅ Запись сделки в лог
+-    with open(TRADE_LOG_PATH, mode="a", newline="") as file:
+-        writer = csv.writer(file)
+-        writer.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), symbol, side, qty, entry_price, tp_price, sl_price])
++    with open(TRADE_LOG_PATH, mode="a", newline="") as file:
++        writer = csv.writer(file)
++        writer.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), symbol, side, qty, entry_price, tp_price, sl_price])
 +
-+LOG_PATH = Path(os.getenv("TRADE_LOG_PATH", "logs/trades.csv"))
-+
-+def append_trade_event(row: dict):
-+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-+    write_header = not LOG_PATH.exists()
-+    with LOG_PATH.open("a", newline="", encoding="utf-8") as f:
-+        w = csv.DictWriter(f, fieldnames=[
-+            "ts","event","symbol","side","qty","price","sl","tp",
-+            "order_id","link_id","mode","extra"
-+        ])
-+        if write_header:
-+            w.writeheader()
-+        row.setdefault("extra", "")
-+        row.setdefault("tp", "")
-+        w.writerow(row)
-+        f.flush()
-
-*** a/position_manager.py
---- b/position_manager.py
-@@
--from typing import Any, Dict, Optional
-+from typing import Any, Dict, Optional
-+import time
-+from core.trade_log import append_trade_event
-@@
- def open_position(
-     symbol: str, side: str, price: Optional[float] = None
- ) -> Dict[str, Any]:
-@@
--    try:
--        o = ex.create_order(
--            sym, type="market", side=order_side, amount=qty, price=None, params=params
--        )
--        oid = o.get("id") or o.get("orderId")
--        if oid:
--            o = _wait_fill(ex, sym, oid)
--        return {
--            "status": (o.get("status") or "unknown"),
--            "order": o,
--            "qty": qty,
--            "price": px,
--            "tp": tp_price,
--            "sl": sl_price,
--            "balance": usdt,
--        }
-+    try:
-+        o = ex.create_order(sym, type="market", side=order_side, amount=qty, price=None, params=params)
-+
-+        # LOG: размещён ордер
++    # 🔹 Автозаливка в GitHub
++    if GITHUB_TOKEN and GITHUB_REPO:
 +        try:
-+            append_trade_event({
-+                "ts": time.time(),
-+                "event": "order_placed",
-+                "symbol": sym,
-+                "side": order_side,
-+                "qty": qty,
-+                "price": px,
-+                "tp": tp_price,
-+                "sl": sl_price,
-+                "order_id": o.get("id") or o.get("orderId"),
-+                "link_id": o.get("clientOrderId") or o.get("orderLinkId") or (o.get("info", {}) or {}).get("orderLinkId"),
-+                "mode": "LIVE",
-+            })
-+        except Exception as _e:
-+            print("[WARN] trade-log placed:", _e)
++            upload_trade_log()
++        except Exception as e:
++            print(f"⚠️ Ошибка загрузки trade log в GitHub: {e}")
 +
-+        oid = o.get("id") or o.get("orderId")
-+        if oid:
-+            o = _wait_fill(ex, sym, oid)
 +
-+        # LOG: исполнен (мягко)
-+        try:
-+            append_trade_event({
-+                "ts": time.time(),
-+                "event": "order_filled",
-+                "symbol": sym,
-+                "side": order_side,
-+                "qty": qty,
-+                "price": px,
-+                "tp": tp_price,
-+                "sl": sl_price,
-+                "order_id": o.get("id") or oid,
-+                "link_id": o.get("clientOrderId") or o.get("orderLinkId") or (o.get("info", {}) or {}).get("orderLinkId"),
-+                "mode": "LIVE",
-+            })
-+        except Exception as _e:
-+            print("[WARN] trade-log filled:", _e)
-+
-+        return {
-+            "status": (o.get("status") or "unknown"),
-+            "order": o,
-+            "qty": qty,
-+            "price": px,
-+            "tp": tp_price,
-+            "sl": sl_price,
-+            "balance": usdt,
-+        }
-@@
-     except Exception as e:
-         msg = str(e)
-+        # LOG: ошибка
-+        try:
-+            append_trade_event({
-+                "ts": time.time(),
-+                "event": "order_error",
-+                "symbol": sym,
-+                "side": order_side,
-+                "qty": qty,
-+                "price": px,
-+                "tp": tp_price,
-+                "sl": sl_price,
-+                "order_id": None,
-+                "link_id": None,
-+                "mode": "LIVE",
-+                "extra": msg,
-+            })
-+        except Exception as _e:
-+            print("[WARN] trade-log error:", _e)
-
-*** a/positions_guard.py
---- b/positions_guard.py
-@@
--from contextlib import contextmanager
-+from contextlib import contextmanager
-+import json
-+import time
-@@
- def main():
-@@
-     args = parser.parse_args()
-@@
-+    # --- COOLDOWN (sec) с бэкомпатом по COOLDOWN_MIN ---
-+    cooldown_sec = int(os.getenv("COOLDOWN_SEC", "0")) \
-+        if os.getenv("COOLDOWN_SEC") is not None \
-+        else int(float(os.getenv("COOLDOWN_MIN", "0")) * 60)
-+    cooldown_path = os.getenv("COOLDOWN_PATH", "logs/cooldown.json")
-+    try:
-+        os.makedirs(os.path.dirname(cooldown_path), exist_ok=True)
-+        if os.path.exists(cooldown_path):
-+            with open(cooldown_path, "r", encoding="utf-8") as f:
-+                last_trade_at = json.load(f)
-+        else:
-+            last_trade_at = {}
-+    except Exception:
-+        last_trade_at = {}
-@@
-     with single_instance_lock():
-@@
--        for p in pairs:
-+        for p in pairs:
-             sym = normalize_symbol(p)
-             price = get_symbol_price(sym)
-+
-+            # COOLDOWN по инструменту
-+            if cooldown_sec > 0:
-+                now = int(time.time())
-+                last_ts = int(last_trade_at.get(sym, 0))
-+                if now - last_ts < cooldown_sec:
-+                    left = cooldown_sec - (now - last_ts)
-+                    print(f"🛑 COOLDOWN {sym}: ещё {left}s — пропуск входа.")
-+                    continue
-@@
--            res = open_position(sym, side=signal)
-+            res = open_position(sym, side=signal)
-             print("🧾 Результат:", res)
-+
-+            # если ордер поставился/исполнен — фиксируем время
-+            if isinstance(res, dict) and res.get("status") not in ("error", "retryable"):
-+                last_trade_at[sym] = int(time.time())
-+                try:
-+                    with open(cooldown_path, "w", encoding="utf-8") as f:
-+                        json.dump(last_trade_at, f)
-+                except Exception as _e:
-+                    print("[WARN] cooldown save:", _e)
-
-
-
++def upload_trade_log():
++    """Загружает logs/trades.csv в GitHub через API"""
++    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{TRADE_LOG_PATH}"
++    with open(TRADE_LOG_PATH, "rb") as f:
++        content = f.read()
++    import base64
++    encoded = base64.b64encode(content).decode()
++    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
++    data = {
++        "message": "Auto-update trades.csv",
++        "content": encoded
++    }
++    r = requests.put(url, headers=headers, json=data)
++    if r.status_code not in (200, 201):
++        raise Exception(f"GitHub API error {r.status_code}: {r.text}")
++    else:
++        print("✅ trade log отправлен в GitHub")
