@@ -76,7 +76,8 @@ def train_model_for_pair(
     future = df["close"].shift(-1)
     y = (future > df["close"]).astype(int).values[:-1]
     X = df[["close", "ema", "rsi", "macd", "signal"]].values[:-1].astype(float)
-    assert len(X) == len(y)
+    if len(X) != len(y):
+        raise ValueError(f"Feature/label length mismatch: X={len(X)} vs y={len(y)}")
 
     split = int(len(X) * 0.8)
     Xtr, Ytr = X[:split], y[:split]
