@@ -1,3 +1,5 @@
+# tools/agent_guard.py
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -6,12 +8,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def run(cmd: str, check: bool = False) -> int:
-    print(f"$ {cmd}")
-    rc = subprocess.call(cmd, shell=True)
+def run(args, check: bool = False) -> int:
+    """
+    Безопасный запуск процесса без shell=True.
+    args: list[str] или строка (будет разбита по пробелам).
+    """
+    if isinstance(args, str):
+        args = args.split()
+    print("$", " ".join(args))
+    rc = subprocess.run(args, check=check).returncode
     if check and rc != 0:
         sys.exit(rc)
     return rc
+
+
+def run_capture(args) -> str:
+    """Выполнить команду и вернуть stdout (без shell=True)."""
+    if isinstance(args, str):
+        args = args.split()
+    res = subprocess.run(args, capture_output=True, text=True, check=True)
+    return res.stdout
 
 
 def ensure_file(path: Path, content: str) -> None:
@@ -22,9 +38,10 @@ def ensure_file(path: Path, content: str) -> None:
         print(f"Exists {path.as_posix()}")
 
 
-def ensure_env_example():
+def ensure_env_example() -> None:
     content = textwrap.dedent(
-        """        BYBIT_API_KEY=
+        """\
+        BYBIT_API_KEY=
         BYBIT_SECRET_KEY=
         PROXY_URL=
         DOMAIN=bybit
@@ -36,15 +53,26 @@ def ensure_env_example():
     ensure_file(ROOT / ".env.example", content)
 
 
-def ensure_procfile():
+def ensure_procfile() -> None:
     content = "worker: python positions_guard.py\n"
     ensure_file(ROOT / "Procfile", content)
 
 
 def try_imports() -> bool:
+    """
+    Пытаемся импортировать все .py модули из репозитория.
+    Если где-то ошибка импорта — печатаем и продолжаем.
+    """
     ok = True
-    out = subprocess.check_output("git ls-files '*.py'", shell=True, text=True)
+    git = shutil.which("git") or "git"
+    try:
+        out = run_capture([git, "ls-files", "*.py"])
+    except Exception as e:
+        print(f"[WARN] git ls-files failed: {e}")
+        return False
+
     for py in out.splitlines():
+        # переводим путь в модуль: a/b/c.py -> a.b.c
         mod = py[:-3].replace("/", ".").replace("\\", ".")
         if mod.endswith(".__init__"):
             continue
@@ -57,19 +85,20 @@ def try_imports() -> bool:
     return ok
 
 
-def dry_run_positions_guard():
+def dry_run_positions_guard() -> None:
     pg = ROOT / "positions_guard.py"
     if not pg.exists():
         print("positions_guard.py not found — skip dry-run.")
         return
-    # попробуем с одной парой
-    rc = run("python positions_guard.py --pair BTC/USDT:USDT --dry-run")
+
+    # Пытаемся запустить с одной парой (DRY)
+    rc = run([sys.executable, str(pg), "--pair", "BTC/USDT:USDT", "--dry-run"])
     if rc != 0:
         # fallback — без аргументов
-        run("python positions_guard.py --dry-run")
+        run([sys.executable, str(pg), "--dry-run"])
 
 
-def main():
+def main() -> None:
     print("─" * 50)
     print("Agent Guard: start")
 
