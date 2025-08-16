@@ -6,11 +6,23 @@ from pathlib import Path
 from typing import Dict
 
 LOG_PATH = Path(os.getenv("TRADE_LOG_PATH", "logs/trades.csv"))
-LOG_TO_STDOUT = os.getenv("LOG_TO_STDOUT", "1") != "0"  # по умолчанию печатаем в логи Railway
+LOG_TO_STDOUT = (
+    os.getenv("LOG_TO_STDOUT", "1") != "0"
+)  # по умолчанию печатаем в логи Railway
 
 FIELDS = [
-    "ts", "event", "symbol", "side", "qty", "price", "sl", "tp",
-    "order_id", "link_id", "mode", "extra",
+    "ts",
+    "event",
+    "symbol",
+    "side",
+    "qty",
+    "price",
+    "sl",
+    "tp",
+    "order_id",
+    "link_id",
+    "mode",
+    "extra",
 ]
 
 

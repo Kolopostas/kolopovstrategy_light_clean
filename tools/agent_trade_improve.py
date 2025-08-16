@@ -64,7 +64,7 @@ def patch_positions_guard_import() -> None:
 
 def _normalize_text(s: str) -> str:
     # NBSP -> space
-    s = s.replace("\u00A0", " ")
+    s = s.replace("\u00a0", " ")
     # Неразрывный дефис и прочие типографские тире -> обычный дефис
     s = s.replace("\u2011", "-").replace("\u2012", "-").replace("\u2013", "-")
     s = s.replace("\u2014", "-").replace("\u2015", "-")

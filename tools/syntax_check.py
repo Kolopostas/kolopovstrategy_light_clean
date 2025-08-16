@@ -4,7 +4,9 @@ import subprocess
 import sys
 
 git = shutil.which("git") or "git"
-res = subprocess.run([git, "ls-files", "*.py"], check=True, capture_output=True, text=True)
+res = subprocess.run(
+    [git, "ls-files", "*.py"], check=True, capture_output=True, text=True
+)
 files = res.stdout.splitlines
 
 if not files:
