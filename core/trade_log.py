@@ -13,6 +13,7 @@ FIELDS = [
     "order_id", "link_id", "mode", "extra",
 ]
 
+
 def append_trade_event(row: Dict) -> None:
     # подготовка CSV
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
