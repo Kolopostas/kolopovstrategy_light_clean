@@ -1,10 +1,11 @@
 import py_compile
+import shutil
 import subprocess
 import sys
 
-files = subprocess.check_output(
-    "git ls-files '*.py'", shell=True, text=True
-).splitlines()
+git = shutil.which("git") or "git"
+res = subprocess.run([git, "ls-files", "*.py"], check=True, capture_output=True, text=True)
+files = res.stdout.splitlines
 
 if not files:
     print("No Python files found.")
