@@ -64,12 +64,15 @@ def cancel_open_orders(symbol: str) -> int:
     try:
         opened = ex.fetch_open_orders(sym)
         for o in opened:
-             try:
+            try:
                 ex.cancel_order(o["id"], sym)
-            except Exception as e
+            except Exception as e:
                 # Не глушим: фиксируем и идём дальше
-                 print(f"[WARN] cancel_order failed symbol={sym} id={o.get('id')}: {e}")
-         return len(opened)
+                print(f"[WARN] cancel_order failed symbol={sym} id={o.get('id')}: {e}")
+        return len(opened)
+    except Exception as e:
+        print(f"[ERROR] fetch_open_orders failed symbol={sym}: {e}")
+        return 0
 
 
 def has_open_position(symbol: str) -> bool:
