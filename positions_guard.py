@@ -30,8 +30,8 @@ def single_instance_lock(name: str = "positions_guard.lock"):
     finally:
         try:
             os.remove(path)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARN] lock cleanup failed: {e}")
 
 
 def ensure_models_exist(pairs, timeframe="15m", limit=2000, model_dir="models"):
