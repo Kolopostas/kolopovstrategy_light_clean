@@ -38,6 +38,15 @@ jobs:
           vulture .
           isort --check --diff .
           black --check .
+ 
+      - name: Run Black
+        run: |
+         black . --line-length 120
+
+      - name: Run flake8
+        run: |
+         flake8 .
+
 
       - name: Agent patches
         run: |
