@@ -1,4 +1,5 @@
 import argparse
+import sys
 import os
 import tempfile
 import time
@@ -160,8 +161,6 @@ def main():
 
 # AGENT_LOOP: цикличный запуск по CHECK_INTERVAL (ENV), либо единичный при --once
 if __name__ == "__main__":
-    import os
-    import sys
 
     iv = int(os.getenv("CHECK_INTERVAL", os.getenv("CHECK_INTERVAL_SECONDS", "30")))
     if "--once" in sys.argv:
