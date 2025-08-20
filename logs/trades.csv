@@ -6,3 +6,117 @@ ts,pair,signal,confidence,price,tp,sl,dry_run
 2025-08-09T16:19:55.890573+00:00,BNB/USDT,SHORT,0.75,807.8,799.914286,813.057143,True
 2025-08-09T16:23:14.470945+00:00,SOL/USDT,SHORT,0.75,180.57,177.926786,182.332143,False
 2025-08-09T16:23:34.314670+00:00,AVAX/USDT,SHORT,0.75,24.323,23.910714,24.597857,False
+1755349480.565878,order_placed,ETH/USDT:USDT,sell,0.01,4414.4,4436.47,4370.26,1a0514f5-431a-46fd-a3c8-f7baa50ecca3,,LIVE,
+1755349480.5664089,order_error,ETH/USDT:USDT,sell,0.01,4414.4,4436.47,4370.26,,,LIVE,"bybit fetchOrder() can only access an order if it is in last 500 orders(of any status) for your account. Set params[""acknowledged""] = True to hide self warning. Alternatively, we suggest to use fetchOpenOrder or fetchClosedOrder"
+1755350193.4167612,order_placed,SOL/USDT:USDT,buy,0.3,187.75,186.81,189.63,26ff8aa9-cb1a-4b41-bbce-a58abd82ee6d,,LIVE,
+1755350193.4177432,order_error,SOL/USDT:USDT,buy,0.3,187.75,186.81,189.63,,,LIVE,"bybit fetchOrder() can only access an order if it is in last 500 orders(of any status) for your account. Set params[""acknowledged""] = True to hide self warning. Alternatively, we suggest to use fetchOpenOrder or fetchClosedOrder"
+1755353456.0601103,order_placed,SOL/USDT:USDT,buy,0.3,186.92,185.99,188.79,cfcae83e-52b2-4f50-9266-11cb7e204441,,LIVE,
+1755353456.0611076,order_error,SOL/USDT:USDT,buy,0.3,186.92,185.99,188.79,,,LIVE,"bybit fetchOrder() can only access an order if it is in last 500 orders(of any status) for your account. Set params[""acknowledged""] = True to hide self warning. Alternatively, we suggest to use fetchOpenOrder or fetchClosedOrder"
+1755353553.2039583,order_placed,AVAX/USDT:USDT,sell,2.4,23.717,23.836,23.48,eef57a88-5580-4ce2-a996-604b5e813a5d,,LIVE,
+1755353553.2047598,order_error,AVAX/USDT:USDT,sell,2.4,23.717,23.836,23.48,,,LIVE,"bybit fetchOrder() can only access an order if it is in last 500 orders(of any status) for your account. Set params[""acknowledged""] = True to hide self warning. Alternatively, we suggest to use fetchOpenOrder or fetchClosedOrder"
+1755372387.066605,order_error,SOL/USDT:USDT,buy,0.3,188.56,187.62,190.45,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755372793.4423492,order_error,SOL/USDT:USDT,buy,0.3,189.07,188.12,190.96,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755372877.23511,order_error,AVAX/USDT:USDT,buy,3.0,24.178,24.057,24.42,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755372957.0848916,order_error,BNB/USDT:USDT,buy,0.08,835.1,830.9,843.5,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755373159.901395,order_error,SOL/USDT:USDT,buy,0.3,188.9,187.96,190.79,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755373237.232162,order_error,AVAX/USDT:USDT,buy,3.0,24.159,24.038,24.401,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755373532.1407356,order_error,ETH/USDT:USDT,buy,0.01,4428.85,4406.71,4473.14,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755373608.3254485,order_error,SOL/USDT:USDT,buy,0.3,188.83,187.89,190.72,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755373681.9376082,order_error,AVAX/USDT:USDT,sell,3.0,24.239,24.36,23.997,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755373756.6093185,order_error,BNB/USDT:USDT,buy,0.08,835.6,831.4,844.0,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755374307.3183165,order_error,SOL/USDT:USDT,buy,0.3,188.85,187.91,190.74,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755374595.692087,order_error,SOL/USDT:USDT,buy,0.3,188.75,187.81,190.64,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755374679.8877742,order_error,AVAX/USDT:USDT,sell,3.0,24.224,24.345,23.982,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755374764.741536,order_error,BNB/USDT:USDT,sell,0.08,833.9,838.1,825.6,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755382397.3368213,order_error,ETH/USDT:USDT,sell,0.01,4412.54,4434.6,4368.41,,,LIVE,"bybit the API endpoint used only supports contract trailingAmount, stopLossPrice and takeProfitPrice orders"
+1755383330.1044183,order_error,ETH/USDT:USDT,sell,0.01,4418.89,4440.98,4374.7,,,LIVE,"bybit {""retCode"":10001,""retMsg"":""can not set tp/sl/ts for zero position"",""result"":{},""retExtInfo"":{},""time"":1755383329743}"
+1755383400.2404778,order_error,SOL/USDT:USDT,buy,0.3,188.53,187.59,190.42,,,LIVE,"bybit {""retCode"":10001,""retMsg"":""can not set tp/sl/ts for zero position"",""result"":{},""retExtInfo"":{},""time"":1755383399875}"
+1755383467.560446,order_error,AVAX/USDT:USDT,sell,3.0,24.246,24.367,24.004,,,LIVE,"bybit {""retCode"":10001,""retMsg"":""can not set tp/sl/ts for zero position"",""result"":{},""retExtInfo"":{},""time"":1755383467182}"
+1755440057.6564162,order_placed,AVAX/USDT:USDT,buy,2.9,24.849,24.725,25.097,d25cf74d-4024-4563-a0b5-7cc6c8a01186,,LIVE,
+1755440065.6653993,order_filled,AVAX/USDT:USDT,buy,2.9,24.849,24.725,25.097,d25cf74d-4024-4563-a0b5-7cc6c8a01186,,LIVE,
+1755440173.7881267,order_placed,BNB/USDT:USDT,buy,0.07,858.1,853.8,866.7,8e159221-7951-4618-b27b-2229aaff5b78,,LIVE,
+1755440181.7987194,order_filled,BNB/USDT:USDT,buy,0.07,858.1,853.8,866.7,8e159221-7951-4618-b27b-2229aaff5b78,,LIVE,
+1755440507.4922693,order_placed,SOL/USDT:USDT,buy,0.2,192.42,191.46,194.34,c35b198c-2ef2-4bce-87ca-86eb36ca5d75,,LIVE,
+1755440515.5036356,order_filled,SOL/USDT:USDT,buy,0.2,192.42,191.46,194.34,c35b198c-2ef2-4bce-87ca-86eb36ca5d75,,LIVE,
+1755441179.5756886,order_placed,ETH/USDT:USDT,buy,0.01,4545.67,4522.94,4591.13,1549e926-78f3-4dd1-a21e-49945cc9a33f,,LIVE,
+1755441187.5852854,order_filled,ETH/USDT:USDT,buy,0.01,4545.67,4522.94,4591.13,1549e926-78f3-4dd1-a21e-49945cc9a33f,,LIVE,
+1755442355.0434046,order_placed,SOL/USDT:USDT,sell,0.2,193.94,194.91,192.0,fef61542-92f1-4ad4-9b2b-f09596e91c58,,LIVE,
+1755442363.0538614,order_filled,SOL/USDT:USDT,sell,0.2,193.94,194.91,192.0,fef61542-92f1-4ad4-9b2b-f09596e91c58,,LIVE,
+1755443235.095488,order_placed,AVAX/USDT:USDT,buy,2.0,25.103,24.977,25.354,0fdc513c-7c26-4b63-b607-99f4fb2218ee,,LIVE,
+1755443243.1061516,order_filled,AVAX/USDT:USDT,buy,2.0,25.103,24.977,25.354,0fdc513c-7c26-4b63-b607-99f4fb2218ee,,LIVE,
+1755445393.837484,order_placed,SOL/USDT:USDT,sell,0.2,194.95,195.92,193.0,eb73f82b-a7b5-467f-b34a-04a93ad33fda,,LIVE,
+1755445401.8495345,order_filled,SOL/USDT:USDT,sell,0.2,194.95,195.92,193.0,eb73f82b-a7b5-467f-b34a-04a93ad33fda,,LIVE,
+1755445494.9275577,order_placed,AVAX/USDT:USDT,sell,2.0,25.33,25.457,25.077,c8d37df1-862d-4545-b47d-36bb47b62999,,LIVE,
+1755445502.9371705,order_filled,AVAX/USDT:USDT,sell,2.0,25.33,25.457,25.077,c8d37df1-862d-4545-b47d-36bb47b62999,,LIVE,
+1755448739.020743,order_placed,BTC/USDT:USDT,buy,0.002,117958.4,117368.6,119138.0,94361b29-c6cb-415d-8d7d-ff6cbae6f664,,LIVE,
+1755448748.3130553,order_filled,BTC/USDT:USDT,buy,0.002,117958.4,117368.6,119138.0,94361b29-c6cb-415d-8d7d-ff6cbae6f664,,LIVE,
+1755448835.1442182,order_placed,ETH/USDT:USDT,buy,0.05,4526.73,4504.1,4572.0,39a2fd83-a3bd-4475-b57c-2238a4abbb88,,LIVE,
+1755448844.0339267,order_filled,ETH/USDT:USDT,buy,0.05,4526.73,4504.1,4572.0,39a2fd83-a3bd-4475-b57c-2238a4abbb88,,LIVE,
+1755448954.9933207,order_placed,AVAX/USDT:USDT,buy,6.5,25.103,24.977,25.354,8a17e6d8-4048-4d14-9b30-08c2331fe65f,,LIVE,
+1755448963.8951056,order_filled,AVAX/USDT:USDT,buy,6.5,25.103,24.977,25.354,8a17e6d8-4048-4d14-9b30-08c2331fe65f,,LIVE,
+1755449648.8772929,order_placed,ETH/USDT:USDT,sell,0.05,4506.68,4529.21,4461.61,c0eb60de-f5e2-4760-97ca-9944c38a1882,,LIVE,
+1755449657.7735794,order_filled,ETH/USDT:USDT,sell,0.05,4506.68,4529.21,4461.61,c0eb60de-f5e2-4760-97ca-9944c38a1882,,LIVE,
+1755449739.569358,order_placed,SOL/USDT:USDT,sell,0.9,193.1,194.07,191.17,1c066238-09bb-4896-adbf-d165b4f37364,,LIVE,
+1755449748.4757106,order_filled,SOL/USDT:USDT,sell,0.9,193.1,194.07,191.17,1c066238-09bb-4896-adbf-d165b4f37364,,LIVE,
+1755450255.6357207,order_placed,AVAX/USDT:USDT,sell,5.5,25.01,25.135,24.76,05fb982e-650d-4a7e-b9e7-0ee7e1adfc19,,LIVE,
+1755450264.69482,order_filled,AVAX/USDT:USDT,sell,5.5,25.01,25.135,24.76,05fb982e-650d-4a7e-b9e7-0ee7e1adfc19,,LIVE,
+1755451343.6042433,order_placed,BNB/USDT:USDT,buy,0.21,854.9,850.6,863.4,bcbe269b-b7c7-456f-ba26-84a7571098ee,,LIVE,
+1755451353.370713,order_filled,BNB/USDT:USDT,buy,0.21,854.9,850.6,863.4,bcbe269b-b7c7-456f-ba26-84a7571098ee,,LIVE,
+1755451733.2327204,order_placed,AVAX/USDT:USDT,sell,5.0,25.264,25.39,25.011,8acd61aa-5bdd-4539-b258-f3829ec78dab,,LIVE,
+1755451742.1532388,order_filled,AVAX/USDT:USDT,sell,5.0,25.264,25.39,25.011,8acd61aa-5bdd-4539-b258-f3829ec78dab,,LIVE,
+1755527957.30736,order_placed,AVAX/USDT:USDT,buy,5.8,23.539,23.421,23.774,87a0aa4e-f3ae-415d-ac9b-3593197dba65,,LIVE,
+1755527966.1868234,order_filled,AVAX/USDT:USDT,buy,5.8,23.539,23.421,23.774,87a0aa4e-f3ae-415d-ac9b-3593197dba65,,LIVE,
+1755540538.0179124,order_placed,AVAX/USDT:USDT,buy,5.7,23.598,23.48,23.834,64aa1e32-b6f1-4431-b061-52cf54d941f7,,LIVE,
+1755540547.3840055,order_filled,AVAX/USDT:USDT,buy,5.7,23.598,23.48,23.834,64aa1e32-b6f1-4431-b061-52cf54d941f7,,LIVE,
+1755543208.3478677,order_placed,BTC/USDT:USDT,buy,0.001,116539.7,115957.0,117705.1,ebea6d1f-9b17-42b9-b250-b2713d3476a9,,LIVE,
+1755543217.2449956,order_filled,BTC/USDT:USDT,buy,0.001,116539.7,115957.0,117705.1,ebea6d1f-9b17-42b9-b250-b2713d3476a9,,LIVE,
+1755543305.8412154,order_placed,ETH/USDT:USDT,buy,0.02,4367.46,4345.62,4411.13,8f5aa994-34f9-4c1b-8f23-84823da7c632,,LIVE,
+1755543314.7297354,order_filled,ETH/USDT:USDT,buy,0.02,4367.46,4345.62,4411.13,8f5aa994-34f9-4c1b-8f23-84823da7c632,,LIVE,
+1755543409.2942402,order_placed,SOL/USDT:USDT,buy,0.4,184.28,183.36,186.12,073c33b4-b2b9-4913-9edf-c0a99fae3206,,LIVE,
+1755543418.1706147,order_filled,SOL/USDT:USDT,buy,0.4,184.28,183.36,186.12,073c33b4-b2b9-4913-9edf-c0a99fae3206,,LIVE,
+1755543501.763401,order_placed,AVAX/USDT:USDT,buy,2.2,23.824,23.705,24.062,dd0bb3f0-1778-45eb-97bd-1f2706823d0f,,LIVE,
+1755543510.6488936,order_filled,AVAX/USDT:USDT,buy,2.2,23.824,23.705,24.062,dd0bb3f0-1778-45eb-97bd-1f2706823d0f,,LIVE,
+1755543607.7010424,order_placed,BNB/USDT:USDT,sell,0.04,845.5,849.7,837.0,8e66a8b3-cf90-4900-91b5-e1e11a4fbdcb,,LIVE,
+1755543616.7662232,order_filled,BNB/USDT:USDT,sell,0.04,845.5,849.7,837.0,8e66a8b3-cf90-4900-91b5-e1e11a4fbdcb,,LIVE,
+1755543999.6630185,order_placed,ETH/USDT:USDT,buy,0.01,4374.58,4352.71,4418.33,fec5eebc-6563-4def-bc86-15fa1ffbe91e,,LIVE,
+1755544008.5612357,order_filled,ETH/USDT:USDT,buy,0.01,4374.58,4352.71,4418.33,fec5eebc-6563-4def-bc86-15fa1ffbe91e,,LIVE,
+1755544376.4385216,order_placed,SOL/USDT:USDT,buy,0.3,183.44,182.52,185.27,aa9a7127-3e26-437c-b94f-7267f541cb91,,LIVE,
+1755544385.4374802,order_filled,SOL/USDT:USDT,buy,0.3,183.44,182.52,185.27,aa9a7127-3e26-437c-b94f-7267f541cb91,,LIVE,
+1755544511.3632174,order_placed,BNB/USDT:USDT,buy,0.08,843.1,838.9,851.5,e371f3be-45f5-4f7c-9eed-e0ca96ef3a99,,LIVE,
+1755544520.2634747,order_filled,BNB/USDT:USDT,buy,0.08,843.1,838.9,851.5,e371f3be-45f5-4f7c-9eed-e0ca96ef3a99,,LIVE,
+1755544667.891929,order_placed,ETH/USDT:USDT,buy,0.01,4356.99,4335.21,4400.56,6eb8c56c-3ffa-4ea5-ab14-a41d052c465d,,LIVE,
+1755544676.7729547,order_filled,ETH/USDT:USDT,buy,0.01,4356.99,4335.21,4400.56,6eb8c56c-3ffa-4ea5-ab14-a41d052c465d,,LIVE,
+1755544921.0388925,order_placed,ETH/USDT:USDT,buy,0.01,4365.42,4343.59,4409.07,c0b27e4b-e3a5-42b2-84c2-abf5b416c945,,LIVE,
+1755544929.9280007,order_filled,ETH/USDT:USDT,buy,0.01,4365.42,4343.59,4409.07,c0b27e4b-e3a5-42b2-84c2-abf5b416c945,,LIVE,
+1755612895.1851516,order_placed,BTC/USDT:USDT,buy,0.001,114726.4,114152.8,115873.7,51e9fe34-01c5-4de4-b824-855059ad7c23,,LIVE,
+1755612904.092528,order_filled,BTC/USDT:USDT,buy,0.001,114726.4,114152.8,115873.7,51e9fe34-01c5-4de4-b824-855059ad7c23,,LIVE,
+1755613001.0551023,order_placed,ETH/USDT:USDT,buy,0.02,4262.52,4241.21,4305.15,aa71a0ab-59da-49b8-b9a6-29e6e7fe5181,,LIVE,
+1755613010.0761209,order_filled,ETH/USDT:USDT,buy,0.02,4262.52,4241.21,4305.15,aa71a0ab-59da-49b8-b9a6-29e6e7fe5181,,LIVE,
+1755613129.3998907,order_placed,SOL/USDT:USDT,buy,0.5,181.36,180.45,183.17,69496110-2947-4483-86c7-d56debd16d6e,,LIVE,
+1755613138.3103495,order_filled,SOL/USDT:USDT,buy,0.5,181.36,180.45,183.17,69496110-2947-4483-86c7-d56debd16d6e,,LIVE,
+1755613538.5705292,order_placed,BNB/USDT:USDT,sell,0.1,839.0,843.2,830.6,a9cc8dab-57ae-472f-90ff-93ca157e72f0,,LIVE,
+1755613547.4714506,order_filled,BNB/USDT:USDT,sell,0.1,839.0,843.2,830.6,a9cc8dab-57ae-472f-90ff-93ca157e72f0,,LIVE,
+1755613687.1845882,order_placed,ETH/USDT:USDT,buy,0.02,4230.23,4209.08,4272.53,7e8320c6-4ae5-4cc5-926c-0f075763c25e,,LIVE,
+1755613696.091691,order_filled,ETH/USDT:USDT,buy,0.02,4230.23,4209.08,4272.53,7e8320c6-4ae5-4cc5-926c-0f075763c25e,,LIVE,
+1755613792.0997984,order_placed,SOL/USDT:USDT,buy,0.7,179.45,178.55,181.24,b74afa24-6e25-4684-812e-73eb875cc949,,LIVE,
+1755613801.0179944,order_filled,SOL/USDT:USDT,buy,0.7,179.45,178.55,181.24,b74afa24-6e25-4684-812e-73eb875cc949,,LIVE,
+1755613900.6674848,order_placed,AVAX/USDT:USDT,buy,5.3,22.721,22.607,22.948,4b6ac4cc-f57f-4447-9849-f50c2cec6885,,LIVE,
+1755613909.6110778,order_filled,AVAX/USDT:USDT,buy,5.3,22.721,22.607,22.948,4b6ac4cc-f57f-4447-9849-f50c2cec6885,,LIVE,
+1755614017.5002437,order_placed,BNB/USDT:USDT,sell,0.14,835.0,839.2,826.7,66f5baef-dbcb-493f-ad64-addac5cd1c50,,LIVE,
+1755614026.4053504,order_filled,BNB/USDT:USDT,sell,0.14,835.0,839.2,826.7,66f5baef-dbcb-493f-ad64-addac5cd1c50,,LIVE,
+1755614626.6077542,order_placed,BTC/USDT:USDT,buy,0.001,113903.2,113333.7,115042.2,a084eda2-9cfe-446e-9f65-4169f6aa21c6,,LIVE,
+1755615903.9511375,order_placed,ETH/USDT:USDT,buy,0.02,4190.4,4169.45,4232.3,158622f6-bcd6-41d4-9b88-6dbcd5ce3edf,,LIVE,
+1755616030.861304,order_placed,SOL/USDT:USDT,buy,0.4,178.16,177.27,179.94,29813394-8570-401f-986f-1c11b8013a67,,LIVE,
+1755616456.3160698,order_placed,ETH/USDT:USDT,buy,0.01,4188.84,4167.9,4230.73,98ad3d17-16c4-4e15-b48b-e882376a0754,,LIVE,
+1755617115.9963758,order_placed,ETH/USDT:USDT,buy,0.02,4208.25,4187.21,4250.33,3266b707-624f-4092-9bff-cb6c403b6f7d,,LIVE,
+1755617240.279419,order_placed,AVAX/USDT:USDT,buy,3.9,23.034,22.919,23.264,116ff708-4e2a-42cb-b64a-c3093785ed24,,LIVE,
+1755617495.6397338,order_placed,ETH/USDT:USDT,buy,0.02,4214.32,4193.25,4256.46,ce9fe0f0-87d2-4ed0-aca2-00a35d8f1f14,,LIVE,
+1755617981.3740814,order_placed,AVAX/USDT:USDT,buy,3.9,22.946,22.831,23.175,59b0a06d-ce5f-4acf-8c55-c663dbc12c8e,,LIVE,
+1755618227.679343,order_placed,SOL/USDT:USDT,buy,0.4,179.37,178.47,181.16,0b6cfcdc-e520-4da2-aa1c-e5bb18ddda11,,LIVE,
+1755618558.077116,order_placed,SOL/USDT:USDT,buy,0.6,178.44,177.55,180.22,4bddb83b-ff45-47ed-8c99-74f5f88938c6,,LIVE,
+1755618789.1887548,order_placed,BNB/USDT:USDT,buy,0.11,832.4,828.2,840.7,d2adf4c0-f5b4-4dfa-ba70-52f60d6a2639,,LIVE,
+1755618977.0883374,order_placed,ETH/USDT:USDT,buy,0.01,4196.26,4175.28,4238.22,8cc94ac7-7a29-48ac-8099-8983d4a6680b,,LIVE,
+1755673825.2850478,order_placed,BTC/USDT:USDT,buy,0.001,113688.9,113120.5,114825.8,b784597f-19f7-4fac-9551-2a15a9d631af,,LIVE,
+1755673947.4997444,order_placed,ETH/USDT:USDT,buy,0.02,4197.4,4176.41,4239.37,f3e49a2d-9ceb-48e1-8f3a-7604b2df3a98,,LIVE,
+1755674060.0486465,order_placed,SOL/USDT:USDT,buy,0.5,181.27,180.36,183.08,996dcf3d-afbe-4d37-98c5-9553262ac1de,,LIVE,
+1755674178.8010466,order_placed,AVAX/USDT:USDT,buy,4.3,22.96,22.845,23.19,fb741b73-522a-4fd3-b016-93c419b42ee8,,LIVE,

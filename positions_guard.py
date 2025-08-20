@@ -6,7 +6,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from core.bybit_exchange import normalize_symbol
+from core.bybit_exchange import normalize_symbol, create_exchange
 from core.env_loader import load_and_check_env
 from core.market_info import (
     cancel_open_orders,
@@ -15,8 +15,110 @@ from core.market_info import (
     get_symbol_price,
     has_open_position,
 )
+
 from core.predict import predict_trend, train_model_for_pair
+from core.trailing_stop import update_trailing_for_symbol, verify_trailing_state, set_stop_loss_only, compute_atr
 from position_manager import open_position
+from core.indicators import compute_snapshot
+
+_BE_DONE = {}
+
+def _has_trailing(exchange, symbol: str) -> bool:
+    try:
+        st = verify_trailing_state(exchange, symbol)
+        rows = (st.get("result", {}) or {}).get("list") or []
+        for r in rows:
+            ts = str(r.get("trailingStop") or "").strip()
+            if ts not in ("", "0", "0.0", "None"):
+                return True
+    except Exception:
+        pass
+    return False
+
+def _maybe_breakeven(exchange, symbol: str, entry_px: float, side: str) -> None:
+    """Перевод SL в безубыток при достижении X*ATR (или процента) — по ENV."""
+    if os.getenv("ENABLE_BREAKEVEN", "1") != "1":
+        return
+    sid = (side or "").lower()
+    key = (symbol, sid)
+    if _BE_DONE.get(key):
+        return
+
+    be_mode = os.getenv("BE_MODE", "atr").lower()  # atr | pct
+    be_offset_pct = float(os.getenv("BE_OFFSET_PCT", "0.0005"))
+
+    cur = get_symbol_price(symbol)
+    should_move = False
+
+    if be_mode == "atr":
+        k = float(os.getenv("BE_ATR_K", "0.5"))
+        tf = os.getenv("ATR_TIMEFRAME", "5m")
+        per = int(os.getenv("ATR_PERIOD", "14"))
+        atr, _ = compute_atr(exchange, symbol, tf, per)
+        if atr > 0:
+            if sid in ("long", "buy"):
+                should_move = cur >= entry_px + k * atr
+            else:
+                should_move = cur <= entry_px - k * atr
+    else:
+        trig = float(os.getenv("BE_TRIGGER_PCT", "0.004"))
+        if sid in ("long", "buy"):
+            should_move = cur >= entry_px * (1 + trig)
+        else:
+            should_move = cur <= entry_px * (1 - trig)
+
+    if not should_move:
+        return
+
+    if sid in ("long", "buy"):
+        be_price = float(exchange.price_to_precision(symbol, entry_px * (1 + be_offset_pct)))
+    else:
+        be_price = float(exchange.price_to_precision(symbol, entry_px * (1 - be_offset_pct)))
+    print("[BE] move SL to", be_price)
+    try:
+        set_stop_loss_only(exchange, symbol, be_price)
+        _BE_DONE[key] = True
+    except Exception as e:
+        print("[BE_ERR]", e)
+
+def apply_trailing_after_entry(sym: str, signal: str, res: dict, dry_run: bool) -> None:
+    """
+    Вешает трейлинг + брейк-ивен сразу после успешного входа.
+    Работает *всегда*, потому что все нужные переменные приходят как аргументы.
+    """
+
+    if dry_run or not isinstance(res, dict) or res.get("status") in {"error", "retryable"}:
+        print("[TS_SKIP]", {"dry_run": dry_run, "status": res.get("status") if isinstance(res, dict) else "?"})
+        return
+
+    try:
+        entry_px = float(res.get("price") or 0.0)
+        if entry_px <= 0:
+            # аккуратный фолбэк на текущую цену
+            try:
+                entry_px = get_symbol_price(sym)
+            except Exception:
+                ex_tmp = create_exchange()
+                tkr = ex_tmp.fetch_ticker(sym)
+                entry_px = float(tkr.get("last") or tkr.get("close") or 0.0)
+
+        ex_ts = create_exchange()
+
+        # если трейл уже висит — не дублируем
+        if os.getenv("USE_TRAILING_STOP", "1") in ("1", "true", "True"):
+            if not _has_trailing(ex_ts, sym):
+                print("[TS_CALL]", {"symbol": sym, "entry": entry_px, "side": signal})
+                ts_resp = update_trailing_for_symbol(ex_ts, sym, entry_px, signal)
+                print("[TS_OK]", ts_resp)
+            else:
+                print("[TS_SKIP] already has trailing for", sym)
+
+            _maybe_breakeven(ex_ts, sym, entry_px, signal)
+        else:
+            print("[TS_SKIP] trailing disabled by USE_TRAILING_STOP")
+    except Exception as e:
+        print("[TS_ERR]", e)
+
 
 
 @contextmanager
@@ -146,9 +248,15 @@ def main():
             pred = predict_trend(sym, timeframe=args.timeframe)
             signal = str(pred.get("signal", "hold")).lower()
             conf = float(pred.get("confidence", 0.0))
-            print(
-                f"🔮 {sym} @ {price:.4f} → signal={signal} conf={conf:.2f} proba={pred.get('proba', {})}"
-            )
+
+            if os.getenv("DEBUG_INDICATORS", "0") == "1":
+                try:
+                    # ЛЕНИВЫЙ импорт (чтобы линтер не ругался, если флаг=0)
+                    snap = compute_snapshot(sym, timeframe=args.timeframe, limit=max(args.limit, 200))
+                    print("[IND]", sym, snap)
+                except Exception as _e:
+                    print("[IND_ERR]", _e)
+            print(f"🔮 {sym} @ {price:.4f} → signal={signal} conf={conf:.2f} proba={pred.get('proba', {})}")
 
             # 4) Вход
             if dry_run or signal not in ("long", "short") or conf < args.threshold:
@@ -157,6 +265,7 @@ def main():
 
             res = open_position(sym, side=signal)
             print("🧾 Результат:", res)
+            apply_trailing_after_entry(sym, signal, res, dry_run)
 
 
 # AGENT_LOOP: цикличный запуск по CHECK_INTERVAL (ENV), либо единичный при --once

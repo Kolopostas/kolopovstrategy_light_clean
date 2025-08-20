@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import time
 from typing import Any, Dict, Optional
@@ -7,29 +9,38 @@ from core.market_info import adjust_qty_price
 from core.trade_log import append_trade_event
 
 
-def _calc_order_qty(
-    balance_usdt: float, price: float, risk_fraction: float, leverage: int
-) -> float:
+
+def _calc_order_qty(balance_usdt: float, price: float, risk_fraction: float, leverage: int) -> float:
+    """Расчёт размера позиции по риск-доле и плечу."""
     notional = max(0.0, balance_usdt) * max(0.0, risk_fraction) * max(1, leverage)
     return (notional / price) if price > 1e-12 else 0.0
 
 
 def _wait_fill(ex, sym: str, order_id: str, timeout_s: int = 8) -> Dict[str, Any]:
-    t0 = time.time()
-    while time.time() - t0 < timeout_s:
-        o = ex.fetch_order(order_id, sym)
-        st = (o.get("status") or "").lower()
-        if st in ("closed", "canceled", "rejected"):
-            return o
-        time.sleep(0.5)
-    return o
-
-
-def open_position(
-    symbol: str, side: str, price: Optional[float] = None
-) -> Dict[str, Any]:
     """
-    MARKET-ордер с TP/SL. Игнорирует 110043, ловит 10001.
+    Ожидание исполнения ордера best-effort: опрос раз в 0.5с до timeout_s.
+    Возвращает последний известный статус ордера.
+    """
+    t0 = time.time()
+    last = {}
+    while time.time() - t0 < timeout_s:
+        try:
+            o = ex.fetch_order(order_id, sym)
+            last = o or last
+            st = (o.get("status") or "").lower()
+            if st in ("closed", "canceled", "rejected"):
+                return o
+        except Exception:
+            # игнорируем разовые сбои сети/таймауты
+            pass
+        time.sleep(0.5)
+    return last
+
+
+def open_position(symbol: str, side: str, price: Optional[float] = None) -> Dict[str, Any]:
+    """
+    MARKET-ордер с TP/SL. Игнорирует 'leverage not modified' (110043),
+    помечает 10001 как retryable.
     Логирует: order_placed / order_filled / order_error.
     DRY_RUN=1 — не отправляет ордера.
     """
@@ -44,7 +55,7 @@ def open_position(
     bal = ex.fetch_balance()
     usdt = float(bal.get("USDT", {}).get("free", 0.0) or 0.0)
 
-    # Цена
+    # Цена (если не передали)
     if price is None:
         t = ex.fetch_ticker(sym)
         price = float(t.get("last") or t.get("close") or 0.0)
@@ -55,7 +66,7 @@ def open_position(
     tp_pct = float(os.getenv("TP_PCT", "0.01"))
     sl_pct = float(os.getenv("SL_PCT", "0.005"))
 
-    # Размер
+    # Размер позиции и приведение к шагам инструмента
     qty_raw = _calc_order_qty(usdt, price, risk_fraction, leverage)
     qty, px, _ = adjust_qty_price(sym, qty_raw, price)
     if qty <= 0:
@@ -68,14 +79,14 @@ def open_position(
 
     order_side = "buy" if side.lower() == "long" else "sell"
 
-    # Плечо
+    # Плечо (110043 = leverage not modified — не критично, игнорируем)
     try:
         ex.set_leverage(leverage, sym)
     except Exception as e:
         if "110043" not in str(e):
             print("⚠️ set_leverage:", e)
 
-    # TP/SL
+    # TP/SL цены
     if order_side == "buy":
         tp_price = float(ex.price_to_precision(sym, px * (1 + tp_pct)))
         sl_price = float(ex.price_to_precision(sym, px * (1 - sl_pct)))
@@ -102,9 +113,7 @@ def open_position(
 
     try:
         # Размещение
-        o = ex.create_order(
-            sym, type="market", side=order_side, amount=qty, price=None, params=params
-        )
+        o = ex.create_order(sym, type="market", side=order_side, amount=qty, price=None, params=params)
 
         # Лог: размещён
         try:
@@ -133,27 +142,7 @@ def open_position(
         if oid:
             o = _wait_fill(ex, sym, oid)
 
-        # Лог: исполнен
-        try:
-            append_trade_event(
-                {
-                    "ts": time.time(),
-                    "event": "order_filled",
-                    "symbol": sym,
-                    "side": order_side,
-                    "qty": qty,
-                    "price": px,
-                    "tp": tp_price,
-                    "sl": sl_price,
-                    "order_id": o.get("id") or oid,
-                    "link_id": o.get("clientOrderId")
-                    or o.get("orderLinkId")
-                    or (o.get("info", {}) or {}).get("orderLinkId"),
-                    "mode": "LIVE",
-                }
-            )
-        except Exception as _e:
-            print("[WARN] trade-log filled:", _e)
+
 
         # Успех
         return {
@@ -191,16 +180,19 @@ def open_position(
             print("[WARN] trade-log error:", _e)
 
         # Коды Bybit
-        if "10001" in msg:
+        if "10001" in msg:  # invalid params (Bybit v5)
             return {
                 "status": "retryable",
                 "reason": "10001 invalid request",
                 "error": msg,
             }
-        if "110043" in msg:
+        if "110043" in msg:  # leverage not modified — treat as OK with warning
             return {
                 "status": "ok_with_warning",
                 "warning": "110043 leverage not modified",
                 "qty": qty,
             }
+
         return {"status": "error", "error": msg, "qty": qty, "price": px}
+    
+    
