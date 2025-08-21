@@ -242,3 +242,120 @@ def update_trailing_for_symbol(
         trigger_by="LastPrice",
     )
 
+logger = logging.getLogger("trailing_stop")
+
+try:
+    import ccxt  # type: ignore
+except Exception:
+    ccxt = None
+
+_RATE_DELAY = float(os.getenv("BYBIT_RATE_LIMIT_DELAY", "0.4"))
+
+def _market_id(exchange, unified_symbol: str) -> str:
+    exchange.load_markets(reload=False)
+    return exchange.market(unified_symbol)["id"]
+
+def _assert_ok(resp: Dict[str, Any]) -> None:
+    rc = resp.get("retCode")
+    if rc in (0, "0", None): return
+    if str(rc) == "110043":
+        logger.warning("Bybit retCode=110043 (not modified) — treat as OK")
+        return
+    raise RuntimeError(f"Bybit error retCode={rc}, retMsg={resp.get('retMsg')}")
+
+def _backoff_sleep(attempt: int) -> None:
+    backoff = min(_RATE_DELAY * (2 ** (attempt - 1)), 2.0)
+    time.sleep(backoff)
+
+def set_trailing_stop_ccxt(exchange, symbol: str, activation_price: float, callback_rate: float,
+                           *, category: str = "linear", tpsl_mode: str = "Full",
+                           position_idx: int = 0, trigger_by: str = "LastPrice",
+                           max_retries: int = 3) -> Dict[str, Any]:
+    """POST /v5/position/trading-stop — вешаем трейлинг на открытую позицию."""
+    bybit_symbol = _market_id(exchange, symbol)
+    payload = {
+        "category": category,
+        "symbol": bybit_symbol,
+        "tpslMode": tpsl_mode,
+        "positionIdx": position_idx,
+        "trailingStop": f"{callback_rate}",     # % как строка
+        "activePrice": f"{activation_price}",   # строка
+        "tpOrderType": "Market",
+        "slOrderType": "Market",
+        "tpTriggerBy": trigger_by,
+        "slTriggerBy": trigger_by,
+    }
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            resp = exchange.privatePostV5PositionTradingStop(payload)
+            _assert_ok(resp)
+            time.sleep(_RATE_DELAY)
+            return resp
+        except Exception as e:
+            msg = str(e)
+            if "rate limit" in msg.lower() or "10006" in msg:
+                if attempt >= max_retries: raise
+                _backoff_sleep(attempt); continue
+            raise
+
+def move_stop_loss(exchange, symbol: str, new_sl_price: float, *,
+                   category: str = "linear", position_idx: int = 0, trigger_by: str = "LastPrice") -> Dict[str, Any]:
+    """Переносим SL (breakeven) на /v5/position/trading-stop."""
+    bybit_symbol = _market_id(exchange, symbol)
+    payload = {
+        "category": category,
+        "symbol": bybit_symbol,
+        "positionIdx": position_idx,
+        "stopLoss": f"{new_sl_price}",
+        "slOrderType": "Market",
+        "slTriggerBy": trigger_by,
+    }
+    resp = exchange.privatePostV5PositionTradingStop(payload)
+    _assert_ok(resp)
+    time.sleep(_RATE_DELAY)
+    return resp
+
+def compute_trailing_from_atr(entry: float, side: str, atr: float, *,
+                              k_activate: float, min_up_pct: float, min_down_pct: float,
+                              cb_from_atr_k: float, cb_fixed_pct: float, auto_cb: bool) -> tuple[float, float]:
+    """
+    Возвращает (activePrice, callback_rate_pct).
+    - Long: активируем, когда цена прошла +max(k*ATR, min_up_pct*entry) выше entry.
+    - Short: активируем, когда цена прошла -max(k*ATR, min_down_pct*entry) ниже entry.
+    - callback_rate либо фиксированный %, либо из ATR: 100 * (cb_from_atr_k * ATR / entry)
+    """
+    side_l = side.lower()
+    if side_l in ("long", "buy"):
+        activate = entry + max(k_activate * atr, entry * min_up_pct)
+    else:
+        activate = entry - max(k_activate * atr, entry * min_down_pct)
+
+    if auto_cb:
+        cb = max(0.1, min(5.0, 100.0 * (cb_from_atr_k * atr / entry)))  # 0.1%..5.0%
+    else:
+        cb = cb_fixed_pct
+    return float(activate), float(cb)
+
+def maybe_breakeven(entry: float, side: str, last: float, atr: float,
+                    *, be_mode: str, be_atr_k: float, be_trigger_pct: float, be_offset_pct: float) -> float | None:
+    """
+    Возвратит новую цену SL (для BE) или None.
+    - ATR-режим: как только цена ушла на be_atr_k*ATR, переносим SL ~ к entry*(1±offset).
+    - pct-режим: триггер по проценту от entry.
+    """
+    side_l = side.lower()
+    if be_mode == "atr":
+        need = be_atr_k * atr
+        in_profit = (last - entry) if side_l in ("long", "buy") else (entry - last)
+        if in_profit >= need:
+            if side_l in ("long", "buy"):
+                return entry * (1.0 + be_offset_pct)
+            else:
+                return entry * (1.0 - be_offset_pct)
+    else:
+        need = entry * be_trigger_pct
+        if (side_l in ("long", "buy") and last >= entry + need) or (side_l in ("short", "sell") and last <= entry - need):
+            return entry * (1.0 + be_offset_pct) if side_l in ("long", "buy") else entry * (1.0 - be_offset_pct)
+    return None

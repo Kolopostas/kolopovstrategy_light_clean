@@ -2,6 +2,60 @@
 from typing import Dict, List
 from core.bybit_exchange import create_exchange
 
+def _sma(values: List[float], period: int) -> float:
+    if len(values) < period or period <= 0:
+        return 0.0
+    return sum(values[-period:]) / float(period)
+
+def ema(series: List[float], period: int) -> float:
+    if not series or period <= 0:
+        return 0.0
+    k = 2.0 / (period + 1.0)
+    e = series[0]
+    for v in series[1:]:
+        e = v * k + e * (1.0 - k)
+    return float(e)
+
+def atr_latest_from_ohlcv(ohlcv: List[List[float]], period: int = 14) -> tuple[float, float]:
+    """
+    Рассчитывает последнюю величину ATR и последний close.
+
+    Параметры:
+      ohlcv  — список свечей формата [timestamp, open, high, low, close, volume]
+      period — период ATR (True Range усредняется простым средним за period)
+
+    Возвращает:
+      (atr, last_close)
+    """
+    if not ohlcv:
+        return 0.0, 0.0
+
+    # Для ATR нужна хотя бы одна «предыдущая» свеча
+    if len(ohlcv) < period + 1:
+        last_close = float(ohlcv[-1][4])
+        return 0.0, last_close
+
+    true_ranges: List[float] = []
+
+    for i in range(1, len(ohlcv)):
+        # Текущая свеча
+        _ts, open_price, high_price, low_price, close_price, _vol = ohlcv[i]
+        # Предыдущая свеча (для расчёта TR нужен prev_close)
+        _prev_ts, prev_open, prev_high, prev_low, prev_close, _prev_vol = ohlcv[i - 1]
+
+        range_high_low = float(high_price) - float(low_price)
+        range_high_prev_close = abs(float(high_price) - float(prev_close))
+        range_low_prev_close  = abs(float(low_price)  - float(prev_close))
+
+        true_range = max(range_high_low, range_high_prev_close, range_low_prev_close)
+        true_ranges.append(true_range)
+
+    # _sma должен быть в этом же модуле; если его нет — добавь простую реализацию
+    atr_value = float(_sma(true_ranges, period))
+    last_close = float(ohlcv[-1][4])
+    return atr_value, last_close
+
+
 def _ema_last(vals: List[float], period: int) -> float:
     a = 2.0 / (period + 1)
     ema = vals[0]

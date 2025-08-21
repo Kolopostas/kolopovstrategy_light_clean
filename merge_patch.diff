@@ -1,118 +1,272 @@
-diff --git a/core/indicators.py b/core/indicators.py
-new file mode 100644
---- /dev/null
-+++ b/core/indicators.py
-@@ -0,0 +1,124 @@
-+# core/indicators.py
-+from typing import Dict, List
-+from core.bybit_exchange import create_exchange
+*** a/position_manager.py
+--- b/position_manager.py
+@@
+ from core.bybit_exchange import create_exchange, normalize_symbol
+ from core.market_info import adjust_qty_price
+ from core.trade_log import append_trade_event
+-from core.indicators import atr_latest_from_ohlcv
++from core.indicators import atr_latest_from_ohlcv
+ 
+@@
+ def open_position(symbol: str, side: str, price: Optional[float] = None) -> Dict[str, Any]:
+@@
+-    # Цена (если не передали)
++    # Цена (если не передали)
+     if price is None:
+         t = ex.fetch_ticker(sym)
+         price = float(t.get("last") or t.get("close") or 0.0)
++    # Округлённая цена входа по тик-шагу
++    px = float(ex.price_to_precision(sym, price))
+ 
+-    # Риск-параметры
+-    risk_fraction = float(os.getenv("RISK_FRACTION", "0.2"))
+-    leverage = int(os.getenv("LEVERAGE", "3"))
+-    tp_pct = float(os.getenv("TP_PCT", "0.01"))
+-    sl_pct = float(os.getenv("SL_PCT", "0.005"))
++    # Риск/плечо
++    leverage = int(os.getenv("LEVERAGE", "3"))
+ 
+-
+-    # ATR-базированный риск
+-    ex_atr = create_exchange()
+-    ohlcv = ex_atr.fetch_ohlcv(sym, timeframe=os.getenv("TIMEFRAME", "5m"), limit=200)
+-    
+-    atr, _last = atr_latest_from_ohlcv(ohlcv, period=int(os.getenv("ATR_PERIOD", "14")))
+-    sl_mult = float(os.getenv("SL_ATR_MULT", "1.8"))
+-    stop_dist = max(atr * sl_mult, 1e-9)
+-    risk_pct = float(os.getenv("RISK_PCT", "0.007"))  # 0.7% от баланса
+-    risk_usdt = max(1e-6, usdt * risk_pct)
+-    qty_raw = (risk_usdt / stop_dist)  # размер позиции от риска
++    # ATR-базированный риск и дистанции
++    tf = os.getenv("TIMEFRAME", "5m")
++    ohlcv = ex.fetch_ohlcv(sym, timeframe=tf, limit=200)
++    atr, _last = atr_latest_from_ohlcv(ohlcv, period=int(os.getenv("ATR_PERIOD", "14")))
++    sl_mult = float(os.getenv("SL_ATR_MULT", "1.8"))          # SL = sl_mult * ATR
++    tp_mult = float(os.getenv("TP_ATR_MULT", "2.2"))          # TP = tp_mult * ATR
++    stop_dist = max(atr * sl_mult, 1e-9)                      # дистанция SL от входа
++    risk_pct = float(os.getenv("RISK_PCT", "0.007"))          # 0.7% капитала на сделку
++    risk_usdt = max(1e-6, usdt * risk_pct)
++    # Размер позиции от риска (в базовой валюте)
++    qty_raw = risk_usdt / stop_dist if stop_dist > 0 else 0.0
 +
-+def _ema_last(vals: List[float], period: int) -> float:
-+    a = 2.0 / (period + 1)
-+    ema = vals[0]
-+    for v in vals[1:]:
-+        ema = a * v + (1 - a) * ema
-+    return ema
++    # Направление
++    order_side = "buy" if side.lower() == "long" else "sell"
 +
-+def _rsi_last(vals: List[float], period: int = 14) -> float:
-+    gains = []; losses = []
-+    for i in range(1, len(vals)):
-+        ch = vals[i] - vals[i-1]
-+        gains.append(max(ch, 0.0))
-+        losses.append(max(-ch, 0.0))
-+    if len(gains) < period:
-+        return 50.0
-+    avg_gain = sum(gains[:period]) / period
-+    avg_loss = sum(losses[:period]) / period
-+    for i in range(period, len(gains)):
-+        avg_gain = (avg_gain*(period-1) + gains[i]) / period
-+        avg_loss = (avg_loss*(period-1) + losses[i]) / period
-+    if avg_loss == 0:
-+        return 100.0
-+    rs = avg_gain / avg_loss
-+    return 100 - (100 / (1 + rs))
++    # Приведение qty и цены к шагам инструмента
++    qty, px, _ = adjust_qty_price(sym, qty_raw, px)
++    if qty <= 0:
++        return {
++            "status": "error",
++            "reason": "qty<=0 after adjust",
++            "balance": usdt,
++            "qty_raw": qty_raw,
++        }
+ 
+-
+-    # TP/SL цены
+-    if order_side == "buy":
+-        sl_price = float(ex.price_to_precision(sym, px - stop_dist))
+-        tp_price = float(ex.price_to_precision(sym, px + float(os.getenv("TP_ATR_MULT", "2.2")) * atr))
+-    else:
+-        sl_price = float(ex.price_to_precision(sym, px + stop_dist))
+-        tp_price = float(ex.price_to_precision(sym, px - float(os.getenv("TP_ATR_MULT", "2.2")) * atr))
+-
+-        # Отладка
++    # TP/SL цены от ATR
++    if order_side == "buy":
++        sl_price = float(ex.price_to_precision(sym, px - stop_dist))
++        tp_price = float(ex.price_to_precision(sym, px + tp_mult * atr))
++    else:
++        sl_price = float(ex.price_to_precision(sym, px + stop_dist))
++        tp_price = float(ex.price_to_precision(sym, px - tp_mult * atr))
 +
-+def _bb_last(vals: List[float], period: int = 20) -> Dict[str, float]:
-+    if len(vals) < period:
-+        m = sum(vals)/len(vals)
-+        return {"mid": m, "up": m, "dn": m, "width": 0.0}
-+    s = vals[-period:]
-+    mid = sum(s)/period
-+    var = sum((x-mid)**2 for x in s)/period
-+    sd = var**0.5
-+    up = mid + 2*sd
-+    dn = mid - 2*sd
-+    width = (up-dn)/mid if mid else 0.0
-+    return {"mid": mid, "up": up, "dn": dn, "width": width}
++    # Параметры ордера (Bybit v5)
++    params = {"takeProfit": tp_price, "stopLoss": sl_price}
 +
-+def compute_snapshot(symbol: str, timeframe: str = "5m", limit: int = 200) -> Dict[str, float]:
-+    """
-+    Лёгкий снимок индикаторов для логов/верификации: EMA, MACD, RSI, BB.
-+    """
-+    ex = create_exchange()
-+    ohlcv = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-+    closes = [c[4] for c in ohlcv]
-+    if len(closes) < 60:
-+        return {}
-+    ema12 = _ema_last(closes, 12)
-+    ema26 = _ema_last(closes, 26)
-+    macd = ema12 - ema26
-+    # грубый сигнал MACD(12,26,9) — достаточно для отладки
-+    macd_series = []
-+    for i in range(26, len(closes)):
-+        ema12_i = _ema_last(closes[:i+1], 12)
-+        ema26_i = _ema_last(closes[:i+1], 26)
-+        macd_series.append(ema12_i - ema26_i)
-+    macd_signal = _ema_last(macd_series, 9) if macd_series else 0.0
-+    rsi = _rsi_last(closes, 14)
-+    bb = _bb_last(closes, 20)
-+    return {
-+        "ema12": round(ema12, 6),
-+        "ema26": round(ema26, 6),
-+        "macd": round(macd, 6),
-+        "macd_signal": round(macd_signal, 6),
-+        "rsi14": round(rsi, 3),
-+        "bb_mid": round(bb["mid"], 6),
-+        "bb_up": round(bb["up"], 6),
-+        "bb_dn": round(bb["dn"], 6),
-+        "bb_width": round(bb["width"], 6),
-+        "close": closes[-1],
-+    }
-diff --git a/core/trailing_stop.py b/core/trailing_stop.py
---- a/core/trailing_stop.py
-+++ b/core/trailing_stop.py
-@@ -1,190 +1,311 @@
--from __future__ import annotations
++    # Отладка
+     print(
+         "🔎 DEBUG ORDER:",
+         {
+             "symbol": sym,
+             "side": order_side,
+             "qty_raw": qty_raw,
+             "qty": qty,
+             "entry_price": px,
+             "TP": tp_price,
+             "SL": sl_price,
+             "lev": leverage,
+         },
+     )
+ 
+     try:
+-        # Размещение
++        # Плечо (110043 — некритично)
++        try:
++            ex.set_leverage(leverage, sym)
++        except Exception as e:
++            if "110043" not in str(e):
++                print("⚠️ set_leverage:", e)
++
++        # Размещение
+         o = ex.create_order(sym, type="market", side=order_side, amount=qty, price=None, params=params)
+@@
+-        # Успех
++        # Успех
+         return {
+             "status": (o.get("status") or "unknown"),
+             "order": o,
+             "qty": qty,
+             "price": px,
+             "tp": tp_price,
+             "sl": sl_price,
+             "balance": usdt,
+         }
+*** a/positions_guard.py
+--- b/positions_guard.py
+@@
+-from core.indicators import atr_latest_from_ohlcv
+-
+ from core.bybit_exchange import normalize_symbol, create_exchange
+ from core.env_loader import load_and_check_env
+@@
+-from core.trailing_stop import (
+-    update_trailing_for_symbol, 
+-    verify_trailing_state, 
+-    set_stop_loss_only, 
+-    compute_atr, 
+-    set_trailing_stop_ccxt, 
+-    compute_trailing_from_atr, 
+-    move_stop_loss, 
+-    maybe_breakeven
+-)
++from core.trailing_stop import (
++    update_trailing_for_symbol,
++    verify_trailing_state,
++    set_stop_loss_only,
++    compute_atr,
++)
+ from position_manager import open_position
+-from core.indicators import compute_snapshot, atr_latest_from_ohlcv
++from core.indicators import compute_snapshot
+@@
+             res = open_position(sym, side=signal)
+             print("🧾 Результат:", res)
+             apply_trailing_after_entry(sym, signal, res, dry_run)
+-
+-            # после print("🧾 Результат:", res)
+-            if not dry_run and isinstance(res, dict) and res.get("status") not in {"error", "retryable"}:
+-                try:
+-                    ex_ts = create_exchange()
+-                    # 1) получаем OHLCV и ATR
+-                    ohlcv = ex_ts.fetch_ohlcv(sym, timeframe=args.timeframe, limit=max(args.limit, 200))
+-                    atr, last_close = atr_latest_from_ohlcv(ohlcv, period=int(os.getenv("ATR_PERIOD", "14")))
+-                    entry_px = float(res.get("price") or last_close or 0.0)
+-                    side = "long" if str(res.get("side") or "").lower() in ("buy", "long") else "short"
+-
+-                    # 2) параметры из ENV
+-                    k_act = float(os.getenv("TS_ACTIVATION_ATR_K", "1.0"))
+-                    min_up = float(os.getenv("TS_ACTIVATION_MIN_UP_PCT", "0.001"))
+-                    min_dn = float(os.getenv("TS_ACTIVATION_MIN_DOWN_PCT", "0.001"))
+-                    auto_cb = os.getenv("TS_CALLBACK_RATE_AUTO", "1") == "1"
+-                    cb_k = float(os.getenv("TS_CALLBACK_RATE_ATR_K", "0.75"))
+-                    cb_fixed = float(os.getenv("TS_CALLBACK_RATE", "1.0"))
+-
+-                    active, cb_pct = compute_trailing_from_atr(entry_px, side, atr,
+-                                                   k_activate=k_act, min_up_pct=min_up, min_down_pct=min_dn,
+-                                                   cb_from_atr_k=cb_k, cb_fixed_pct=cb_fixed, auto_cb=auto_cb)
+-                    print("[TS_CALL]", {"symbol": sym, "side": side, "entry": entry_px, "atr": atr, "active": active, "cb%": cb_pct})
+-                    set_trailing_stop_ccxt(ex_ts, sym, activation_price=active, callback_rate=cb_pct,
+-                               category="linear", tpsl_mode="Full", position_idx=0, trigger_by="LastPrice")
+-                    print("[TS_OK]")
+-                except Exception as e:
+-                    print("[TS_ERR]", e)
+ 
+*** a/core/trailing_stop.py
+--- b/core/trailing_stop.py
+@@
 -import os
 -import time
 -import logging
--from typing import Dict, Any
+-from typing import Dict, Any, List
 -
 -logger = logging.getLogger("trailing_stop")
 -
 -try:
 -    import ccxt  # type: ignore
 -except Exception:
--    ccxt = None  # чтобы не падало при импорт-аналитике
+-    ccxt = None
 -
 -_RATE_DELAY = float(os.getenv("BYBIT_RATE_LIMIT_DELAY", "0.4"))  # 3 rps ~= 0.33s
 -
+-
+-# ---------------- helpers ----------------
 -def _market_id(exchange, unified_symbol: str) -> str:
 -    """BTC/USDT:USDT -> BTCUSDT (id для Bybit v5)."""
 -    exchange.load_markets(reload=False)
 -    m = exchange.market(unified_symbol)
 -    return m["id"]
 -
+-
 -def _assert_ok(resp: Dict[str, Any]) -> None:
+-    """Поднимаем исключение, если Bybit вернул ошибку; 110043 трактуем как OK."""
 -    rc = resp.get("retCode")
 -    if rc in (0, "0", None):
 -        return
--    # 110043 (not modified) считаем «успехом с предупреждением»
--    if str(rc) == "110043":
+-    if str(rc) == "110043":  # not modified
 -        logger.warning("Bybit retCode=110043 (not modified) — считаем как OK")
 -        return
--    raise RuntimeError(f"Bybit error retCode={rc}, retMsg={resp.get('retMsg')}")
+-    raise RuntimeError(f"Bybit error retCode={rc}, retMsg={resp.get('retMsg')}, result={resp.get('result')}")
 -
+-
+-def _fetch_ohlcv(exchange, symbol: str, timeframe: str, limit: int) -> List[List[float]]:
+-    # ohlcv: [ts, open, high, low, close, volume]
+-    return exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+-
+-
+-def _sma(vals: List[float], period: int) -> float:
+-    n = len(vals)
+-    if n < period or period <= 0:
+-        return sum(vals) / max(1, n)
+-    return sum(vals[-period:]) / float(period)
+-
+-
+-def compute_atr(
+-    exchange,
+-    symbol: str,
+-    timeframe: str = "5m",
+-    period: int = 14,
+-    *,
+-    limit: int | None = None
+-) -> tuple[float, float]:
+-    """
+-    Возвращает (atr, last_close).
+-
+-    ATR (Wilder, SMA):
+-      TR = max(high - low, |high - prev_close|, |low - prev_close|)
+-      ATR = SMA(TR, period)
+-    """
+-    if limit is None:
+-        limit = max(period + 1, 100)
+-
+-    ohlcv = _fetch_ohlcv(exchange, symbol, timeframe, limit)
+-    if len(ohlcv) < period + 1:
+-        last_close = float(ohlcv[-1][4]) if ohlcv else 0.0
+-        return 0.0, last_close
+-
+-    true_ranges: list[float] = []
+-    for i in range(1, len(ohlcv)):
+-        high = float(ohlcv[i][2])
+-        low = float(ohlcv[i][3])
+-        prev_close = float(ohlcv[i - 1][4])
+-        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+-        true_ranges.append(tr)
+-
+-    atr = _sma(true_ranges, period)
+-    last_close = float(ohlcv[-1][4])
+-    return float(atr), last_close
+-
+-
+-# --------------- core API wrappers ---------------
 -def set_trailing_stop_ccxt(
 -    exchange,
 -    symbol: str,
@@ -135,25 +289,23 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 -        "symbol": bybit_symbol,
 -        "tpslMode": tpsl_mode,
 -        "positionIdx": position_idx,
--        "trailingStop": f"{callback_rate}",      # строка!
--        "activePrice": f"{activation_price}",    # строка!
+-        "trailingStop": f"{callback_rate}",     # строка!
+-        "activePrice": f"{activation_price}",   # строка!
 -        "tpOrderType": "Market",
 -        "slOrderType": "Market",
 -        "tpTriggerBy": trigger_by,
 -        "slTriggerBy": trigger_by,
 -    }
--
 -    attempt = 0
 -    while True:
 -        attempt += 1
 -        try:
 -            resp = exchange.privatePostV5PositionTradingStop(payload)
 -            _assert_ok(resp)
--            time.sleep(_RATE_DELAY)
+-            time.sleep(_RATE_DELAY)  # базовая пауза против 10006/429
 -            return resp
 -        except Exception as e:
 -            msg = str(e)
--            # 10006/429 — лимиты: exponential backoff и повтор
 -            if "10006" in msg or "rate limit" in msg.lower():
 -                if attempt >= max_retries:
 -                    raise
@@ -161,22 +313,114 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 -                logger.warning("[TS][RETRY %d] rate limit, sleep=%.2fs", attempt, backoff)
 -                time.sleep(backoff)
 -                continue
--            # ccxt BaseError или иное — пробрасываем
 -            raise
 -
+-
 -def verify_trailing_state(exchange, symbol: str, *, category: str = "linear") -> Dict[str, Any]:
--    """GET /v5/position/list — посмотреть, что повисло на позиции."""
+-    """GET /v5/position/list — посмотреть текущие параметры позиции (включая trailingStop/stopLoss)."""
 -    bybit_symbol = _market_id(exchange, symbol)
 -    return exchange.privateGetV5PositionList({"category": category, "symbol": bybit_symbol})
 -
--def update_trailing_for_symbol(exchange, symbol: str, current_price: float) -> Dict[str, Any]:
--    """Удобный хелпер: активатор ~5% от текущей."""
--    activation_price = float(current_price) * 0.95
+-
+-def set_stop_loss_only(
+-    exchange, symbol: str, stop_price: float,
+-    *, category: str = "linear", position_idx: int = 0, trigger_by: str = "LastPrice"
+-) -> Dict[str, Any]:
+-    """
+-    Переставляет только StopLoss через тот же endpoint /v5/position/trading-stop (Full).
+-    Удобно для перевода в безубыток.
+-    """
+-    bybit_symbol = _market_id(exchange, symbol)
+-    payload = {
+-        "category": category,
+-        "symbol": bybit_symbol,
+-        "positionIdx": position_idx,
+-        "tpslMode": "Full",
+-        "stopLoss": f"{stop_price}",
+-        "slOrderType": "Market",
+-        "slTriggerBy": trigger_by,
+-    }
+-    resp = exchange.privatePostV5PositionTradingStop(payload)
+-    _assert_ok(resp)
+-    time.sleep(_RATE_DELAY)
+-    return resp
+-
+-
+-# --------------- high-level: activation logic (ATR/PCT) ---------------
+-def update_trailing_for_symbol(
+-    exchange,
+-    symbol: str,
+-    entry_price: float,
+-    side: str,
+-    *,
+-    activation_mode: str | None = None,   # atr | pct
+-    atr_timeframe: str | None = None,
+-    atr_period: int | None = None,
+-    atr_k: float | None = None,
+-    up_pct: float | None = None,
+-    down_pct: float | None = None,
+-    callback_rate: float | None = None,
+-    auto_callback: bool | None = None,
+-    auto_cb_k: float | None = None,
+-) -> Dict[str, Any]:
+-    """
+-    Ставит трейлинг-стоп с активацией:
+-      mode="atr":  LONG → entry + K*ATR ; SHORT → entry - K*ATR
+-      mode="pct":  LONG → entry*(1+up_pct) ; SHORT → entry*(1-down_pct)
+-    Параметры читаются из .env при отсутствии аргументов.
+-    """
+-    activation_mode = (activation_mode or os.getenv("TS_ACTIVATION_MODE", "atr")).lower()
+-    atr_timeframe = atr_timeframe or os.getenv("ATR_TIMEFRAME", "5m")
+-    atr_period = int(atr_period or int(os.getenv("ATR_PERIOD", "14")))
+-    atr_k = float(atr_k or float(os.getenv("TS_ACTIVATION_ATR_K", "1.0")))
+-
+-    up_pct = float(os.getenv("TS_ACTIVATION_UP_PCT", "0.003")) if up_pct is None else up_pct
+-    down_pct = float(os.getenv("TS_ACTIVATION_DOWN_PCT", "0.003")) if down_pct is None else down_pct
+-    min_up_pct = float(os.getenv("TS_ACTIVATION_MIN_UP_PCT", "0.001"))
+-    min_dn_pct = float(os.getenv("TS_ACTIVATION_MIN_DOWN_PCT", "0.001"))
+-
+-    callback_rate = float(os.getenv("TS_CALLBACK_RATE", "1.0")) if callback_rate is None else callback_rate
+-    auto_callback = bool(int(os.getenv("TS_CALLBACK_RATE_AUTO", "0"))) if auto_callback is None else auto_callback
+-    auto_cb_k = float(os.getenv("TS_CALLBACK_RATE_ATR_K", "0.75")) if auto_cb_k is None else auto_cb_k
+-
+-    side_l = (side or "").lower()
+-
+-    if activation_mode == "atr":
+-        atr, _ = compute_atr(exchange, symbol, atr_timeframe, atr_period)
+-        if atr > 0:
+-            offset = atr_k * atr
+-            if side_l in ("long", "buy"):
+-                base = entry_price * (1.0 + min_up_pct)
+-                active = max(entry_price + offset, base)
+-            else:
+-                base = entry_price * (1.0 - min_dn_pct)
+-                active = min(entry_price - offset, base)
+-            if auto_callback:
+-                pct = max(atr / entry_price * 100.0 * auto_cb_k, 0.1)
+-                callback_rate = max(0.1, min(pct, 5.0))  # лимиты Bybit
+-            logger.info("[TS_ACTIVE][ATR] %s side=%s entry=%.6f atr=%.6f k=%.3f active=%.6f cb=%.3f%%",
+-                        symbol, side_l, entry_price, atr, atr_k, active, callback_rate)
+-        else:
+-            activation_mode = "pct"
+-
+-    if activation_mode != "atr":
+-        if side_l in ("long", "buy"):
+-            active = entry_price * (1.0 + max(min_up_pct, up_pct))
+-        else:
+-            active = entry_price * (1.0 - max(min_dn_pct, down_pct))
+-        logger.info("[TS_ACTIVE][PCT] %s side=%s entry=%.6f up=%.4f down=%.4f active=%.6f cb=%.3f%%",
+-                    symbol, side_l, entry_price, up_pct, down_pct, active, callback_rate)
+-
+-    try:
+-        active_precise = float(exchange.price_to_precision(symbol, active))
+-    except Exception:
+-        active_precise = active
+-
 -    return set_trailing_stop_ccxt(
 -        exchange=exchange,
 -        symbol=symbol,
--        activation_price=activation_price,
--        callback_rate=1.0,
+-        activation_price=active_precise,
+-        callback_rate=callback_rate,
 -        category="linear",
 -        tpsl_mode="Full",
 -        position_idx=0,
@@ -194,7 +438,7 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 +except Exception:
 +    ccxt = None
 +
-+_RATE_DELAY = float(os.getenv("BYBIT_RATE_LIMIT_DELAY", "0.4"))  # 3 rps ~= 0.33s
++_RATE_DELAY = float(os.getenv("BYBIT_RATE_LIMIT_DELAY", "0.4"))  # базовая задержка
 +
 +# ---------------- helpers ----------------
 +def _market_id(exchange, unified_symbol: str) -> str:
@@ -214,7 +458,6 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 +    raise RuntimeError(f"Bybit error retCode={rc}, retMsg={resp.get('retMsg')}, result={resp.get('result')}")
 +
 +def _fetch_ohlcv(exchange, symbol: str, timeframe: str, limit: int) -> List[List[float]]:
-+    # ohlcv: [ts, open, high, low, close, volume]
 +    return exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
 +
 +def _sma(vals: List[float], period: int) -> float:
@@ -231,21 +474,17 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 +    *,
 +    limit: int | None = None
 +) -> Tuple[float, float]:
-+    """
-+    Возвращает (atr, last_close).
-+    ATR по Wilder/SMA: TR = max(H-L, |H-C_prev|, |L-C_prev|), затем SMA(period).
-+    """
++    """Возвращает (atr, last_close) по Wilder/SMA."""
 +    if limit is None:
 +        limit = max(period + 1, 100)
 +    ohlcv = _fetch_ohlcv(exchange, symbol, timeframe, limit)
 +    if len(ohlcv) < period + 1:
-+        return 0.0, (ohlcv[-1][4] if ohlcv else 0.0)
++        last_close = float(ohlcv[-1][4]) if ohlcv else 0.0
++        return 0.0, last_close
 +    trs: List[float] = []
 +    for i in range(1, len(ohlcv)):
-+        _, o, h, l, c, _v = ohlcv[i]
-+        _, _o1, _h1, _l1, c_prev, _v1 = ohlcv[i - 1]
-+        tr = max(h - l, abs(h - c_prev), abs(l - c_prev))
-+        trs.append(tr)
++        high = float(ohlcv[i][2]); low = float(ohlcv[i][3]); prev_close = float(ohlcv[i-1][4])
++        trs.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
 +    atr = _sma(trs, period)
 +    last_close = float(ohlcv[-1][4])
 +    return float(atr), last_close
@@ -259,22 +498,19 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 +    *,
 +    category: str = "linear",
 +    tpsl_mode: str = "Full",
-+    position_idx: int = 0,          # 0(one-way), 1(Long), 2(Short)
++    position_idx: int = 0,
 +    trigger_by: str = "LastPrice",
 +    max_retries: int = 3,
 +) -> Dict[str, Any]:
-+    """
-+    POST /v5/position/trading-stop через ccxt (privatePostV5PositionTradingStop).
-+    ВАЖНО: числовые параметры — строками.
-+    """
++    """POST /v5/position/trading-stop через ccxt (privatePostV5PositionTradingStop)."""
 +    bybit_symbol = _market_id(exchange, symbol)
 +    payload = {
 +        "category": category,
 +        "symbol": bybit_symbol,
 +        "tpslMode": tpsl_mode,
 +        "positionIdx": position_idx,
-+        "trailingStop": f"{callback_rate}",     # строка!
-+        "activePrice": f"{activation_price}",   # строка!
++        "trailingStop": f"{callback_rate}",
++        "activePrice": f"{activation_price}",
 +        "tpOrderType": "Market",
 +        "slOrderType": "Market",
 +        "tpTriggerBy": trigger_by,
@@ -286,21 +522,18 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 +        try:
 +            resp = exchange.privatePostV5PositionTradingStop(payload)
 +            _assert_ok(resp)
-+            time.sleep(_RATE_DELAY)  # базовая пауза против 10006/429
++            time.sleep(_RATE_DELAY)
 +            return resp
 +        except Exception as e:
 +            msg = str(e)
 +            if "10006" in msg or "rate limit" in msg.lower():
 +                if attempt >= max_retries:
 +                    raise
-+                backoff = min(_RATE_DELAY * (2 ** (attempt - 1)), 2.0)
-+                logger.warning("[TS][RETRY %d] rate limit, sleep=%.2fs", attempt, backoff)
-+                time.sleep(backoff)
++                time.sleep(min(_RATE_DELAY * (2 ** (attempt - 1)), 2.0))
 +                continue
 +            raise
 +
 +def verify_trailing_state(exchange, symbol: str, *, category: str = "linear") -> Dict[str, Any]:
-+    """GET /v5/position/list — посмотреть текущие параметры позиции (включая trailingStop/stopLoss)."""
 +    bybit_symbol = _market_id(exchange, symbol)
 +    return exchange.privateGetV5PositionList({"category": category, "symbol": bybit_symbol})
 +
@@ -308,10 +541,7 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 +    exchange, symbol: str, stop_price: float,
 +    *, category: str = "linear", position_idx: int = 0, trigger_by: str = "LastPrice"
 +) -> Dict[str, Any]:
-+    """
-+    Переставляет только StopLoss через тот же endpoint /v5/position/trading-stop (Full).
-+    Удобно для перевода в безубыток.
-+    """
++    """Переставляет только StopLoss через /v5/position/trading-stop (Full)."""
 +    bybit_symbol = _market_id(exchange, symbol)
 +    payload = {
 +        "category": category,
@@ -327,7 +557,7 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 +    time.sleep(_RATE_DELAY)
 +    return resp
 +
-+# --------------- high-level: activation logic (ATR/PCT) ---------------
++# --------------- high-level (ATR/PCT) ---------------
 +def update_trailing_for_symbol(
 +    exchange,
 +    symbol: str,
@@ -344,12 +574,7 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 +    auto_callback: bool | None = None,
 +    auto_cb_k: float | None = None,
 +) -> Dict[str, Any]:
-+    """
-+    Ставит трейлинг-стоп с активацией:
-+      mode="atr":  LONG → entry + K*ATR ; SHORT → entry - K*ATR
-+      mode="pct":  LONG → entry*(1+up_pct) ; SHORT → entry*(1-down_pct)
-+    Параметры читаются из .env при отсутствии аргументов.
-+    """
++    """Ставит трейлинг-стоп с активацией по ATR или %."""
 +    activation_mode = (activation_mode or os.getenv("TS_ACTIVATION_MODE", "atr")).lower()
 +    atr_timeframe = atr_timeframe or os.getenv("ATR_TIMEFRAME", "5m")
 +    atr_period = int(atr_period or int(os.getenv("ATR_PERIOD", "14")))
@@ -379,8 +604,6 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 +            if auto_callback:
 +                pct = max(atr / entry_price * 100.0 * auto_cb_k, 0.1)
 +                callback_rate = max(0.1, min(pct, 5.0))  # лимиты Bybit
-+            logger.info("[TS_ACTIVE][ATR] %s side=%s entry=%.6f atr=%.6f k=%.3f active=%.6f cb=%.3f%%",
-+                        symbol, side_l, entry_price, atr, atr_k, active, callback_rate)
 +        else:
 +            activation_mode = "pct"
 +
@@ -389,8 +612,6 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 +            active = entry_price * (1.0 + max(min_up_pct, up_pct))
 +        else:
 +            active = entry_price * (1.0 - max(min_dn_pct, down_pct))
-+        logger.info("[TS_ACTIVE][PCT] %s side=%s entry=%.6f up=%.4f down=%.4f active=%.6f cb=%.3f%%",
-+                    symbol, side_l, entry_price, up_pct, down_pct, active, callback_rate)
 +
 +    try:
 +        active_precise = float(exchange.price_to_precision(symbol, active))
@@ -407,155 +628,34 @@ diff --git a/core/trailing_stop.py b/core/trailing_stop.py
 +        position_idx=0,
 +        trigger_by="LastPrice",
 +    )
-diff --git a/positions_guard.py b/positions_guard.py
---- a/positions_guard.py
-+++ b/positions_guard.py
-@@ -1,22 +1,33 @@
- import argparse
- import os
- import sys
- import tempfile
- import time
- from contextlib import contextmanager
- from datetime import datetime, timezone
- 
- from core.bybit_exchange import normalize_symbol, create_exchange
- from core.env_loader import load_and_check_env
- from core.market_info import (
-     cancel_open_orders,
-     get_balance,
-     get_open_orders,
-     get_symbol_price,
-     has_open_position,
- )
- from core.predict import predict_trend, train_model_for_pair
--from core.trailing_stop import set_trailing_stop_ccxt, verify_trailing_state
--from position_manager import open_position, update_trailing_for_symbol
-+from core.trailing_stop import (
-+    update_trailing_for_symbol,
-+    verify_trailing_state,
-+    set_stop_loss_only,
-+    compute_atr,
-+)
-+from core.indicators import compute_snapshot
-+from position_manager import open_position
 +
-+# простая память для брейк-ивена/кулдауна
-+_BE_DONE = {}
- 
- def _apply_trailing_if_needed(sym: str, res: dict, dry_run: bool) -> None:
-@@ -36,16 +47,72 @@
-         ex_ts = create_exchange()
-         print("[TS_CALL]", {"symbol": sym, "entry": entry_px})
--        ts_resp = update_trailing_for_symbol(ex_ts, sym, entry_px)
-+        # передаём сторону (signal лежит в res? нет — приходим извне)
-+        raise RuntimeError("update_trailing_for_symbol now requires side=...")  # защитный шип, заменим ниже
-         print("[TS_OK]", ts_resp)
-     except Exception as e:
-         print("[TS_ERR]", e)
- 
-+def _has_trailing(exchange, symbol: str) -> bool:
-+    try:
-+        st = verify_trailing_state(exchange, symbol)
-+        rows = (st.get("result", {}) or {}).get("list") or []
-+        for r in rows:
-+            ts = str(r.get("trailingStop") or "").strip()
-+            if ts not in ("", "0", "0.0", "None"):
-+                return True
-+    except Exception:
-+        pass
-+    return False
++def compute_trailing_from_atr(entry: float, side: str, atr: float, *,
++                              k_activate: float, min_up_pct: float, min_down_pct: float,
++                              cb_from_atr_k: float, cb_fixed_pct: float, auto_cb: bool) -> Tuple[float, float]:
++    """Возвращает (activePrice, callback_rate_pct) на базе ATR."""
++    side_l = side.lower()
++    if side_l in ("long", "buy"):
++        activate = entry + max(k_activate * atr, entry * min_up_pct)
++    else:
++        activate = entry - max(k_activate * atr, entry * min_down_pct)
++    if auto_cb:
++        cb = max(0.1, min(5.0, 100.0 * (cb_from_atr_k * atr / entry)))  # 0.1%..5%
++    else:
++        cb = cb_fixed_pct
++    return float(activate), float(cb)
 +
-+def _maybe_breakeven(exchange, symbol: str, entry_px: float, side: str) -> None:
-+    """Перевод SL в безубыток при достижении X*ATR или PCT (ENV)."""
-+    if os.getenv("ENABLE_BREAKEVEN", "1") != "1":
-+        return
-+    sid = (side or "").lower()
-+    key = (symbol, sid)
-+    if _BE_DONE.get(key):
-+        return
-+
-+    be_mode = os.getenv("BE_MODE", "atr").lower()  # atr | pct
-+    be_offset_pct = float(os.getenv("BE_OFFSET_PCT", "0.0005"))  # +0.05% запас
-+
-+    cur = get_symbol_price(symbol)
-+    should_move = False
-+
++def maybe_breakeven(entry: float, side: str, last: float, atr: float,
++                    *, be_mode: str, be_atr_k: float, be_trigger_pct: float, be_offset_pct: float) -> float | None:
++    """Возвращает цену SL для перевода в BE либо None."""
++    side_l = side.lower()
 +    if be_mode == "atr":
-+        # срабатывание при проходе K*ATR от входа
-+        k = float(os.getenv("BE_ATR_K", "0.5"))
-+        tf = os.getenv("ATR_TIMEFRAME", "5m")
-+        per = int(os.getenv("ATR_PERIOD", "14"))
-+        atr, _ = compute_atr(exchange, symbol, tf, per)
-+        if atr > 0:
-+            if sid in ("long", "buy"):
-+                should_move = cur >= entry_px + k * atr
-+            else:
-+                should_move = cur <= entry_px - k * atr
++        need = be_atr_k * atr
++        in_profit = (last - entry) if side_l in ("long", "buy") else (entry - last)
++        if in_profit >= need:
++            return entry * (1.0 + be_offset_pct) if side_l in ("long", "buy") else entry * (1.0 - be_offset_pct)
 +    else:
-+        # процентный режим
-+        trig = float(os.getenv("BE_TRIGGER_PCT", "0.004"))  # 0.4%
-+        if sid in ("long", "buy"):
-+            should_move = cur >= entry_px * (1 + trig)
-+        else:
-+            should_move = cur <= entry_px * (1 - trig)
-+
-+    if not should_move:
-+        return
-+
-+    # сам безубыток
-+    if sid in ("long", "buy"):
-+        be_price = float(exchange.price_to_precision(symbol, entry_px * (1 + be_offset_pct)))
-+    else:
-+        be_price = float(exchange.price_to_precision(symbol, entry_px * (1 - be_offset_pct)))
-+    print("[BE] move SL to", be_price)
-+    try:
-+        set_stop_loss_only(exchange, symbol, be_price)
-+        _BE_DONE[key] = True
-+    except Exception as e:
-+        print("[BE_ERR]", e)
-+
- @contextmanager
- def single_instance_lock(name: str = "positions_guard.lock"):
-     path = os.path.join(tempfile.gettempdir(), name)
-@@ -148,6 +215,10 @@
-             pred = predict_trend(sym, timeframe=args.timeframe)
-             signal = str(pred.get("signal", "hold")).lower()
-             conf = float(pred.get("confidence", 0.0))
-+            if os.getenv("DEBUG_INDICATORS", "0") == "1":
-+                try:
-+                    snap = compute_snapshot(sym, timeframe=args.timeframe, limit=max(args.limit, 200))
-+                    print("[IND]", sym, snap)
-+                except Exception as _e:
-+                    print("[IND_ERR]", _e)
-             print(
-                 f"🔮 {sym} @ {price:.4f} → signal={signal} conf={conf:.2f} proba={pred.get('proba', {})}"
-             )
-@@ -163,8 +234,23 @@
- 
--            res = open_position(sym, side=signal)
-+            res = open_position(sym, side=signal)
-             print("🧾 Результат:", res)
--            _apply_trailing_if_needed(sym, res, dry_run)
-+            # --- трейл и брейк-ивен ---
-+            if not dry_run and isinstance(res, dict) and res.get("status") not in {"error", "retryable"}:
-+                try:
-+                    entry_px = float(res.get("price") or 0.0)
-+                    if entry_px <= 0:
-+                        try:
-+                            entry_px = get_symbol_price(sym)
-+                        except Exception:
-+                            ex_tmp = create_exchange()
-+                            tkr = ex_tmp.fetch_ticker(sym)
-+                            entry_px = float(tkr.get("last") or tkr.get("close") or 0.0)
-+                    ex_ts = create_exchange()
-+                    if not _has_trailing(ex_ts, sym):
-+                        print("[TS_CALL]", {"symbol": sym, "entry": entry_px, "side": signal})
-+                        ts_resp = update_trailing_for_symbol(ex_ts, sym, entry_px, signal)
-+                        print("[TS_OK]", ts_resp)
-+                    _maybe_breakeven(ex_ts, sym, entry_px, signal)
-+                except Exception as e:
-+                    print("[TS_ERR]", e)
- 
- # AGENT_LOOP: цикличный запуск по CHECK_INTERVAL (ENV), либо единичный при --once
- if __name__ == "__main__":
++        need = entry * be_trigger_pct
++        if (side_l in ("long", "buy") and last >= entry + need) or (side_l in ("short", "sell") and last <= entry - need):
++            return entry * (1.0 + be_offset_pct) if side_l in ("long", "buy") else entry * (1.0 - be_offset_pct)
++    return None
+

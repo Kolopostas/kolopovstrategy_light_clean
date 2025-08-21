@@ -6,6 +6,8 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
+from core.indicators import atr_latest_from_ohlcv
+
 from core.bybit_exchange import normalize_symbol, create_exchange
 from core.env_loader import load_and_check_env
 from core.market_info import (
@@ -17,9 +19,18 @@ from core.market_info import (
 )
 
 from core.predict import predict_trend, train_model_for_pair
-from core.trailing_stop import update_trailing_for_symbol, verify_trailing_state, set_stop_loss_only, compute_atr
+from core.trailing_stop import (
+    update_trailing_for_symbol, 
+    verify_trailing_state, 
+    set_stop_loss_only, 
+    compute_atr, 
+    set_trailing_stop_ccxt, 
+    compute_trailing_from_atr, 
+    move_stop_loss, 
+    maybe_breakeven
+)
 from position_manager import open_position
-from core.indicators import compute_snapshot
+from core.indicators import compute_snapshot, atr_latest_from_ohlcv
 
 _BE_DONE = {}
 
@@ -266,6 +277,35 @@ def main():
             res = open_position(sym, side=signal)
             print("🧾 Результат:", res)
             apply_trailing_after_entry(sym, signal, res, dry_run)
+
+            # после print("🧾 Результат:", res)
+            if not dry_run and isinstance(res, dict) and res.get("status") not in {"error", "retryable"}:
+                try:
+                    ex_ts = create_exchange()
+                    # 1) получаем OHLCV и ATR
+                    ohlcv = ex_ts.fetch_ohlcv(sym, timeframe=args.timeframe, limit=max(args.limit, 200))
+                    atr, last_close = atr_latest_from_ohlcv(ohlcv, period=int(os.getenv("ATR_PERIOD", "14")))
+                    entry_px = float(res.get("price") or last_close or 0.0)
+                    side = "long" if str(res.get("side") or "").lower() in ("buy", "long") else "short"
+
+                    # 2) параметры из ENV
+                    k_act = float(os.getenv("TS_ACTIVATION_ATR_K", "1.0"))
+                    min_up = float(os.getenv("TS_ACTIVATION_MIN_UP_PCT", "0.001"))
+                    min_dn = float(os.getenv("TS_ACTIVATION_MIN_DOWN_PCT", "0.001"))
+                    auto_cb = os.getenv("TS_CALLBACK_RATE_AUTO", "1") == "1"
+                    cb_k = float(os.getenv("TS_CALLBACK_RATE_ATR_K", "0.75"))
+                    cb_fixed = float(os.getenv("TS_CALLBACK_RATE", "1.0"))
+
+                    active, cb_pct = compute_trailing_from_atr(entry_px, side, atr,
+                                                   k_activate=k_act, min_up_pct=min_up, min_down_pct=min_dn,
+                                                   cb_from_atr_k=cb_k, cb_fixed_pct=cb_fixed, auto_cb=auto_cb)
+                    print("[TS_CALL]", {"symbol": sym, "side": side, "entry": entry_px, "atr": atr, "active": active, "cb%": cb_pct})
+                    set_trailing_stop_ccxt(ex_ts, sym, activation_price=active, callback_rate=cb_pct,
+                               category="linear", tpsl_mode="Full", position_idx=0, trigger_by="LastPrice")
+                    print("[TS_OK]")
+                except Exception as e:
+                    print("[TS_ERR]", e)
+
 
 
 # AGENT_LOOP: цикличный запуск по CHECK_INTERVAL (ENV), либо единичный при --once

@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from core.bybit_exchange import create_exchange, normalize_symbol
 from core.market_info import adjust_qty_price
 from core.trade_log import append_trade_event
-
+from core.indicators import atr_latest_from_ohlcv
 
 
 def _calc_order_qty(balance_usdt: float, price: float, risk_fraction: float, leverage: int) -> float:
@@ -66,37 +66,28 @@ def open_position(symbol: str, side: str, price: Optional[float] = None) -> Dict
     tp_pct = float(os.getenv("TP_PCT", "0.01"))
     sl_pct = float(os.getenv("SL_PCT", "0.005"))
 
-    # Размер позиции и приведение к шагам инструмента
-    qty_raw = _calc_order_qty(usdt, price, risk_fraction, leverage)
-    qty, px, _ = adjust_qty_price(sym, qty_raw, price)
-    if qty <= 0:
-        return {
-            "status": "error",
-            "reason": "qty<=0 after adjust",
-            "balance": usdt,
-            "qty_raw": qty_raw,
-        }
 
-    order_side = "buy" if side.lower() == "long" else "sell"
+    # ATR-базированный риск
+    ex_atr = create_exchange()
+    ohlcv = ex_atr.fetch_ohlcv(sym, timeframe=os.getenv("TIMEFRAME", "5m"), limit=200)
+    
+    atr, _last = atr_latest_from_ohlcv(ohlcv, period=int(os.getenv("ATR_PERIOD", "14")))
+    sl_mult = float(os.getenv("SL_ATR_MULT", "1.8"))
+    stop_dist = max(atr * sl_mult, 1e-9)
+    risk_pct = float(os.getenv("RISK_PCT", "0.007"))  # 0.7% от баланса
+    risk_usdt = max(1e-6, usdt * risk_pct)
+    qty_raw = (risk_usdt / stop_dist)  # размер позиции от риска
 
-    # Плечо (110043 = leverage not modified — не критично, игнорируем)
-    try:
-        ex.set_leverage(leverage, sym)
-    except Exception as e:
-        if "110043" not in str(e):
-            print("⚠️ set_leverage:", e)
 
     # TP/SL цены
     if order_side == "buy":
-        tp_price = float(ex.price_to_precision(sym, px * (1 + tp_pct)))
-        sl_price = float(ex.price_to_precision(sym, px * (1 - sl_pct)))
+        sl_price = float(ex.price_to_precision(sym, px - stop_dist))
+        tp_price = float(ex.price_to_precision(sym, px + float(os.getenv("TP_ATR_MULT", "2.2")) * atr))
     else:
-        tp_price = float(ex.price_to_precision(sym, px * (1 - tp_pct)))
-        sl_price = float(ex.price_to_precision(sym, px * (1 + sl_pct)))
+        sl_price = float(ex.price_to_precision(sym, px + stop_dist))
+        tp_price = float(ex.price_to_precision(sym, px - float(os.getenv("TP_ATR_MULT", "2.2")) * atr))
 
-    params = {"takeProfit": tp_price, "stopLoss": sl_price}
-
-    # Отладка
+        # Отладка
     print(
         "🔎 DEBUG ORDER:",
         {
@@ -194,5 +185,4 @@ def open_position(symbol: str, side: str, price: Optional[float] = None) -> Dict
             }
 
         return {"status": "error", "error": msg, "qty": qty, "price": px}
-    
     
