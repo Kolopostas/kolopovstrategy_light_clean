@@ -3,11 +3,9 @@ import os
 import sys
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+
 from datetime import datetime, timezone
-
-from core.indicators import atr_latest_from_ohlcv
-
 from core.bybit_exchange import normalize_symbol, create_exchange
 from core.env_loader import load_and_check_env
 from core.market_info import (
@@ -20,21 +18,23 @@ from core.market_info import (
 
 from core.predict import predict_trend, train_model_for_pair
 from core.trailing_stop import (
-    update_trailing_for_symbol, 
-    verify_trailing_state, 
-    set_stop_loss_only, 
-    compute_atr, 
-    set_trailing_stop_ccxt, 
-    compute_trailing_from_atr, 
-    move_stop_loss, 
-    maybe_breakeven
+    update_trailing_for_symbol,
+    verify_trailing_state,
+    set_stop_loss_only,
+    compute_atr,
 )
+
 from position_manager import open_position
 from core.indicators import compute_snapshot, atr_latest_from_ohlcv
 
-_BE_DONE = {}
+# Память о том, что безубыток уже переведён (по паре и направлению)
+_BE_DONE: dict = {}
+
 
 def _has_trailing(exchange, symbol: str) -> bool:
+    """
+    Проверяем, установлен ли уже трейлинг по символу. Использует verify_trailing_state().
+    """
     try:
         st = verify_trailing_state(exchange, symbol)
         rows = (st.get("result", {}) or {}).get("list") or []
@@ -46,18 +46,25 @@ def _has_trailing(exchange, symbol: str) -> bool:
         pass
     return False
 
+
 def _maybe_breakeven(exchange, symbol: str, entry_px: float, side: str) -> None:
-    """Перевод SL в безубыток при достижении X*ATR (или процента) — по ENV."""
+    """
+    Переносит стоп-лосс в безубыток, если цена прошла достаточное расстояние.
+    Условия и коэффициенты берём из .env: ENABLE_BREAKEVEN, BE_MODE,
+    BE_ATR_K, BE_TRIGGER_PCT, BE_OFFSET_PCT.
+    """
     if os.getenv("ENABLE_BREAKEVEN", "1") != "1":
         return
+
     sid = (side or "").lower()
     key = (symbol, sid)
     if _BE_DONE.get(key):
         return
 
-    be_mode = os.getenv("BE_MODE", "atr").lower()  # atr | pct
+    be_mode = os.getenv("BE_MODE", "atr").lower()  # "atr" | "pct"
     be_offset_pct = float(os.getenv("BE_OFFSET_PCT", "0.0005"))
 
+    # Текущая цена
     cur = get_symbol_price(symbol)
     should_move = False
 
@@ -85,6 +92,7 @@ def _maybe_breakeven(exchange, symbol: str, entry_px: float, side: str) -> None:
         be_price = float(exchange.price_to_precision(symbol, entry_px * (1 + be_offset_pct)))
     else:
         be_price = float(exchange.price_to_precision(symbol, entry_px * (1 - be_offset_pct)))
+
     print("[BE] move SL to", be_price)
     try:
         set_stop_loss_only(exchange, symbol, be_price)
@@ -92,12 +100,12 @@ def _maybe_breakeven(exchange, symbol: str, entry_px: float, side: str) -> None:
     except Exception as e:
         print("[BE_ERR]", e)
 
+
 def apply_trailing_after_entry(sym: str, signal: str, res: dict, dry_run: bool) -> None:
     """
-    Вешает трейлинг + брейк-ивен сразу после успешного входа.
-    Работает *всегда*, потому что все нужные переменные приходят как аргументы.
+    Вешает трейлинг-стоп и переводит SL в безубыток сразу после успешного входа.
+    Использует update_trailing_for_symbol и _maybe_breakeven().
     """
-
     if dry_run or not isinstance(res, dict) or res.get("status") in {"error", "retryable"}:
         print("[TS_SKIP]", {"dry_run": dry_run, "status": res.get("status") if isinstance(res, dict) else "?"})
         return
@@ -105,7 +113,6 @@ def apply_trailing_after_entry(sym: str, signal: str, res: dict, dry_run: bool) 
     try:
         entry_px = float(res.get("price") or 0.0)
         if entry_px <= 0:
-            # аккуратный фолбэк на текущую цену
             try:
                 entry_px = get_symbol_price(sym)
             except Exception:
@@ -115,7 +122,6 @@ def apply_trailing_after_entry(sym: str, signal: str, res: dict, dry_run: bool) 
 
         ex_ts = create_exchange()
 
-        # если трейл уже висит — не дублируем
         if os.getenv("USE_TRAILING_STOP", "1") in ("1", "true", "True"):
             if not _has_trailing(ex_ts, sym):
                 print("[TS_CALL]", {"symbol": sym, "entry": entry_px, "side": signal})
@@ -131,9 +137,12 @@ def apply_trailing_after_entry(sym: str, signal: str, res: dict, dry_run: bool) 
         print("[TS_ERR]", e)
 
 
-
 @contextmanager
 def single_instance_lock(name: str = "positions_guard.lock"):
+    """
+    Предохраняет от одновременного запуска нескольких копий скрипта.
+    Создаёт файл-замок в /tmp, удаляет его по завершении.
+    """
     path = os.path.join(tempfile.gettempdir(), name)
     if os.path.exists(path):
         raise RuntimeError(f"Already running: {path}")
@@ -148,6 +157,10 @@ def single_instance_lock(name: str = "positions_guard.lock"):
 
 
 def ensure_models_exist(pairs, timeframe="15m", limit=2000, model_dir="models"):
+    """
+    Проверяет наличие моделей ML для всех пар, которые мы торгуем.
+    Если модели нет – обучаем с нуля (train_model_for_pair).
+    """
     os.makedirs(model_dir, exist_ok=True)
     missing = []
     for p in pairs:
@@ -175,6 +188,7 @@ def main():
     parser.add_argument(
         "--threshold", type=float, default=float(os.getenv("CONF_THRESHOLD", "0.65"))
     )
+    parser.add_argument("--no-lock", action="store_true", help="Запуск без single-instance lock")
     parser.add_argument("--timeframe", type=str, default=os.getenv("TIMEFRAME", "5m"))
     parser.add_argument(
         "--limit", type=int, default=int(os.getenv("TRAIN_LIMIT", "3000"))
@@ -203,10 +217,7 @@ def main():
     if not pairs:
         raise ValueError("PAIRS пуст — заполни в .env")
 
-    # предохранители из .env (с дефолтами)
-    min_balance = float(
-        os.getenv("MIN_BALANCE_USDT", "5")
-    )  # минимальный баланс для попытки входа
+    min_balance = float(os.getenv("MIN_BALANCE_USDT", "5"))
     dry_run = not args.live
 
     print("──────── Kolopovstrategy guard ────────")
@@ -217,7 +228,8 @@ def main():
     if args.autotrain:
         ensure_models_exist(pairs, timeframe=args.timeframe, limit=args.limit)
 
-    with single_instance_lock():
+    lock_ctx = nullcontext() if args.no_lock else single_instance_lock()
+    with lock_ctx:
         print("DEBUG PROXY_URL:", os.getenv("PROXY_URL"))
         usdt = get_balance("USDT")
         print(f"💰 Баланс USDT: {usdt:.2f}")
@@ -225,7 +237,7 @@ def main():
             print(f"⛔ Баланс ниже минимума ({min_balance} USDT) — торговля пропущена.")
             return
 
-        # DRY_RUN переменная — двойной предохранитель
+        # DRY_RUN переменная – двойной предохранитель
         if dry_run:
             os.environ["DRY_RUN"] = "1"
         else:
@@ -235,7 +247,7 @@ def main():
             sym = normalize_symbol(p)
             price = get_symbol_price(sym)
 
-            # 1) Пред‑чек: открытые ордера
+            # 1) Проверка: есть ли открытые ордера?
             opened = get_open_orders(sym)
             if opened:
                 print(f"⏳ Есть открытые ордера по {sym}: {len(opened)}")
@@ -243,16 +255,12 @@ def main():
                     n = cancel_open_orders(sym)
                     print(f"🧹 Отменил {n} ордер(ов).")
                 else:
-                    print(
-                        "⏸ Пропускаю вход (запусти с --auto-cancel, чтобы чистить хвосты)."
-                    )
+                    print("⏸ Пропускаю вход (запусти с --auto-cancel, чтобы чистить хвосты).")
                     continue
 
-            # 2) Пред‑чек: активная позиция
+            # 2) Проверка: есть ли уже позиция?
             if args.no_pyramid and has_open_position(sym):
-                print(
-                    f"🏕 Уже есть позиция по {sym} — пирамидинг выключен (--no-pyramid). Пропуск."
-                )
+                print(f"🏕 Уже есть позиция по {sym} — пирамидинг выключен (--no-pyramid). Пропуск.")
                 continue
 
             # 3) Прогноз
@@ -260,16 +268,17 @@ def main():
             signal = str(pred.get("signal", "hold")).lower()
             conf = float(pred.get("confidence", 0.0))
 
+            # Отладочный вывод индикаторов
             if os.getenv("DEBUG_INDICATORS", "0") == "1":
                 try:
-                    # ЛЕНИВЫЙ импорт (чтобы линтер не ругался, если флаг=0)
                     snap = compute_snapshot(sym, timeframe=args.timeframe, limit=max(args.limit, 200))
                     print("[IND]", sym, snap)
                 except Exception as _e:
                     print("[IND_ERR]", _e)
+
             print(f"🔮 {sym} @ {price:.4f} → signal={signal} conf={conf:.2f} proba={pred.get('proba', {})}")
 
-            # 4) Вход
+            # 4) Условия входа
             if dry_run or signal not in ("long", "short") or conf < args.threshold:
                 print("⏸ Условия входа не выполнены (или DRY).")
                 continue
@@ -278,52 +287,4 @@ def main():
             print("🧾 Результат:", res)
             apply_trailing_after_entry(sym, signal, res, dry_run)
 
-            # после print("🧾 Результат:", res)
-            if not dry_run and isinstance(res, dict) and res.get("status") not in {"error", "retryable"}:
-                try:
-                    ex_ts = create_exchange()
-                    # 1) получаем OHLCV и ATR
-                    ohlcv = ex_ts.fetch_ohlcv(sym, timeframe=args.timeframe, limit=max(args.limit, 200))
-                    atr, last_close = atr_latest_from_ohlcv(ohlcv, period=int(os.getenv("ATR_PERIOD", "14")))
-                    entry_px = float(res.get("price") or last_close or 0.0)
-                    side = "long" if str(res.get("side") or "").lower() in ("buy", "long") else "short"
-
-                    # 2) параметры из ENV
-                    k_act = float(os.getenv("TS_ACTIVATION_ATR_K", "1.0"))
-                    min_up = float(os.getenv("TS_ACTIVATION_MIN_UP_PCT", "0.001"))
-                    min_dn = float(os.getenv("TS_ACTIVATION_MIN_DOWN_PCT", "0.001"))
-                    auto_cb = os.getenv("TS_CALLBACK_RATE_AUTO", "1") == "1"
-                    cb_k = float(os.getenv("TS_CALLBACK_RATE_ATR_K", "0.75"))
-                    cb_fixed = float(os.getenv("TS_CALLBACK_RATE", "1.0"))
-
-                    active, cb_pct = compute_trailing_from_atr(entry_px, side, atr,
-                                                   k_activate=k_act, min_up_pct=min_up, min_down_pct=min_dn,
-                                                   cb_from_atr_k=cb_k, cb_fixed_pct=cb_fixed, auto_cb=auto_cb)
-                    print("[TS_CALL]", {"symbol": sym, "side": side, "entry": entry_px, "atr": atr, "active": active, "cb%": cb_pct})
-                    set_trailing_stop_ccxt(ex_ts, sym, activation_price=active, callback_rate=cb_pct,
-                               category="linear", tpsl_mode="Full", position_idx=0, trigger_by="LastPrice")
-                    print("[TS_OK]")
-                except Exception as e:
-                    print("[TS_ERR]", e)
-
-
-
-# AGENT_LOOP: цикличный запуск по CHECK_INTERVAL (ENV), либо единичный при --once
-if __name__ == "__main__":
-
-    iv = int(os.getenv("CHECK_INTERVAL", os.getenv("CHECK_INTERVAL_SECONDS", "30")))
-    if "--once" in sys.argv:
-        main()
-    else:
-        print(f"[CONFIG] CHECK_INTERVAL={iv}s")
-        while True:
-            t0 = time.time()
-            try:
-                main()
-            except Exception as e:
-                print(f"[LOOP ERR] {e}")
-            sleep_for = max(0.0, iv - (time.time() - t0))
-            print(
-                f"[TICK] took={time.time()-t0:.1f}s | sleep={sleep_for:.1f}s | interval={iv}s"
-            )
-            time.sleep(sleep_for)
+            # Больше ничего не делаем: apply_trailing_after_entry() ставит трейл и переводит в BE

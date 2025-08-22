@@ -1,36 +1,35 @@
-# core/indicators.py
 from typing import Dict, List
 from core.bybit_exchange import create_exchange
 
+
 def _sma(values: List[float], period: int) -> float:
+    """
+    Простейшее скользящее среднее. Возвращает среднее последних 'period' значений.
+    Если данных меньше, чем период, возвращает среднее всего списка.
+    """
     if len(values) < period or period <= 0:
         return 0.0
     return sum(values[-period:]) / float(period)
 
-def ema(series: List[float], period: int) -> float:
-    if not series or period <= 0:
-        return 0.0
-    k = 2.0 / (period + 1.0)
-    e = series[0]
-    for v in series[1:]:
-        e = v * k + e * (1.0 - k)
-    return float(e)
 
 def atr_latest_from_ohlcv(ohlcv: List[List[float]], period: int = 14) -> tuple[float, float]:
     """
-    Рассчитывает последнюю величину ATR и последний close.
+    Рассчитывает ATR (Average True Range) по последним 'period' свечам
+    и возвращает кортеж (atr, last_close).
+
+    True Range = max(high - low, |high - prev_close|, |low - prev_close|).
+    ATR = SMA(True Range, period).
 
     Параметры:
-      ohlcv  — список свечей формата [timestamp, open, high, low, close, volume]
-      period — период ATR (True Range усредняется простым средним за period)
+      ohlcv  — список свечей [timestamp, open, high, low, close, volume].
+      period — период ATR.
 
     Возвращает:
-      (atr, last_close)
+      (atr_value, last_close)
     """
     if not ohlcv:
         return 0.0, 0.0
 
-    # Для ATR нужна хотя бы одна «предыдущая» свеча
     if len(ohlcv) < period + 1:
         last_close = float(ohlcv[-1][4])
         return 0.0, last_close
@@ -38,42 +37,45 @@ def atr_latest_from_ohlcv(ohlcv: List[List[float]], period: int = 14) -> tuple[f
     true_ranges: List[float] = []
 
     for i in range(1, len(ohlcv)):
-        # Текущая свеча
-        _ts, open_price, high_price, low_price, close_price, _vol = ohlcv[i]
-        # Предыдущая свеча (для расчёта TR нужен prev_close)
-        _prev_ts, prev_open, prev_high, prev_low, prev_close, _prev_vol = ohlcv[i - 1]
+        # текущие данные
+        _, _, high_price, low_price, _, _ = ohlcv[i]
+        # предыдущий close
+        _, _, _, _, prev_close, _ = ohlcv[i - 1]
 
         range_high_low = float(high_price) - float(low_price)
-        range_high_prev_close = abs(float(high_price) - float(prev_close))
-        range_low_prev_close  = abs(float(low_price)  - float(prev_close))
+        range_high_prev = abs(float(high_price) - float(prev_close))
+        range_low_prev = abs(float(low_price) - float(prev_close))
 
-        true_range = max(range_high_low, range_high_prev_close, range_low_prev_close)
+        true_range = max(range_high_low, range_high_prev, range_low_prev)
         true_ranges.append(true_range)
 
-    # _sma должен быть в этом же модуле; если его нет — добавь простую реализацию
     atr_value = float(_sma(true_ranges, period))
     last_close = float(ohlcv[-1][4])
     return atr_value, last_close
 
 
 def _ema_last(vals: List[float], period: int) -> float:
-    a = 2.0 / (period + 1)
+    """
+    Возвращает последнее значение экспоненциального скользящего среднего (EMA)
+    для списка значений vals по заданному периоду.
+    """
+    alpha = 2.0 / (period + 1.0)
     ema = vals[0]
     for v in vals[1:]:
-        ema = a * v + (1 - a) * ema
+        ema = alpha * v + (1 - alpha) * ema
     return ema
 
+
 def _rsi_last(vals: List[float], period: int = 14) -> float:
-    gains = []
-    losses = []
+    """
+    Рассчитывает последнее значение индекса относительной силы (RSI).
+    """
+    gains: List[float] = []
+    losses: List[float] = []
     for i in range(1, len(vals)):
-        ch = vals[i] - vals[i - 1]
-        if ch >= 0:
-            gains.append(ch)
-            losses.append(0.0)
-        else:
-            gains.append(0.0)
-            losses.append(-ch)
+        change = vals[i] - vals[i - 1]
+        gains.append(max(change, 0.0))
+        losses.append(max(-change, 0.0))
 
     if len(gains) < period:
         return 50.0
@@ -89,41 +91,57 @@ def _rsi_last(vals: List[float], period: int = 14) -> float:
         return 100.0
 
     rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+    return 100.0 - (100.0 / (1.0 + rs))
 
 
 def _bb_last(vals: List[float], period: int = 20) -> Dict[str, float]:
+    """
+    Рассчитывает последние значения полос Боллинджера (BB) и их ширину.
+    Возвращает dict с mid, up, dn и width.
+    """
     if len(vals) < period:
-        m = sum(vals)/len(vals)
-        return {"mid": m, "up": m, "dn": m, "width": 0.0}
-    s = vals[-period:]
-    mid = sum(s)/period
-    var = sum((x-mid)**2 for x in s)/period
-    sd = var**0.5
-    up = mid + 2*sd
-    dn = mid - 2*sd
-    width = (up-dn)/mid if mid else 0.0
+        mid = sum(vals) / len(vals)
+        return {"mid": mid, "up": mid, "dn": mid, "width": 0.0}
+
+    recent_vals = vals[-period:]
+    mid = sum(recent_vals) / period
+    variance = sum((x - mid) ** 2 for x in recent_vals) / period
+    sd = variance ** 0.5
+    up = mid + 2 * sd
+    dn = mid - 2 * sd
+    width = (up - dn) / mid if mid else 0.0
+
     return {"mid": mid, "up": up, "dn": dn, "width": width}
 
+
 def compute_snapshot(symbol: str, timeframe: str = "5m", limit: int = 200) -> Dict[str, float]:
-    """Лёгкий снимок индикаторов для логов/верификации: EMA, MACD, RSI, BB."""
+    """
+    Возвращает краткий набор индикаторов для дальнейшего анализа или логирования:
+    EMA12, EMA26, MACD, MACD‑signal (по сигнальной EMA9), RSI14, Bollinger Bands и текущее закрытие.
+    """
     ex = create_exchange()
     ohlcv = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-    closes = [c[4] for c in ohlcv]
+    closes = [float(c[4]) for c in ohlcv]
+
     if len(closes) < 60:
         return {}
+
     ema12 = _ema_last(closes, 12)
     ema26 = _ema_last(closes, 26)
     macd = ema12 - ema26
-    # грубый MACD signal(9) — достаточно для визуальной верификации
-    macd_series = []
+
+    # “Сигнальная линия” MACD: EMA(9) от последовательности macd‑значений;
+    # для простоты считаем на последнем отрезке (последние 60 значений).
+    macd_series: List[float] = []
     for i in range(26, len(closes)):
-        ema12_i = _ema_last(closes[:i+1], 12)
-        ema26_i = _ema_last(closes[:i+1], 26)
+        ema12_i = _ema_last(closes[: i + 1], 12)
+        ema26_i = _ema_last(closes[: i + 1], 26)
         macd_series.append(ema12_i - ema26_i)
+
     macd_signal = _ema_last(macd_series, 9) if macd_series else 0.0
     rsi = _rsi_last(closes, 14)
     bb = _bb_last(closes, 20)
+
     return {
         "ema12": round(ema12, 6),
         "ema26": round(ema26, 6),
