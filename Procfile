@@ -1,1 +1,1 @@
-worker: python positions_guard.py
+worker: python positions_guard.py --once
