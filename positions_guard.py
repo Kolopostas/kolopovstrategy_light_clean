@@ -27,6 +27,19 @@ from core.trailing_stop import (
 from position_manager import open_position
 from core.indicators import compute_snapshot, atr_latest_from_ohlcv
 
+try:
+    # Гарантируем небеферизованный stdout в любом окружении
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+    os.environ.setdefault("PYTHONUNBUFFERED", "1")
+    # Локальный файл логов (на Railway тоже полезно)
+    Path("logs").mkdir(exist_ok=True)
+    with open("logs/boot.log", "a", encoding="utf-8") as f:
+        f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] BOOT: positions_guard.py loaded, cwd={os.getcwd()}\n")
+    print("BOOT: positions_guard loaded", flush=True)
+except Exception:
+    pass
+
 # Память о том, что безубыток уже переведён (по паре и направлению)
 _BE_DONE: dict = {}
 
@@ -45,6 +58,20 @@ def _has_trailing(exchange, symbol: str) -> bool:
     except Exception:
         pass
     return False
+
+_last_hb = 0.0
+def _heartbeat(msg: str = "HB"):
+    """Периодически печатает хартбит, чтобы в Railway были живые логи."""
+    global _last_hb
+    now = time.time()
+    if now - _last_hb >= 15:  # каждые ~15 секунд
+        _last_hb = now
+        print(f"{time.strftime('%H:%M:%S')} {msg}", flush=True)
+        try:
+            with open("logs/boot.log", "a", encoding="utf-8") as f:
+                f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+        except Exception:
+            pass
 
 
 def _maybe_breakeven(exchange, symbol: str, entry_px: float, side: str) -> None:
